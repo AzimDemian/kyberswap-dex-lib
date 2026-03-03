@@ -2,15 +2,15 @@ package uniswapv3
 
 import (
 	"bytes"
-	"math/big"
 	"text/template"
 )
 
-type PoolsListQueryParams struct {
-	AllowSubgraphError     bool
-	LastCreatedAtTimestamp *big.Int
-	First                  int
-	Skip                   int
+type DiscoveryPoolsListQueryParams struct {
+	AllowSubgraphError bool
+	First              int
+	Skip               int
+	MinTVLUSD          float64
+	MinVolumeUSD       float64
 }
 
 type PoolTicksQueryParams struct {
@@ -19,33 +19,37 @@ type PoolTicksQueryParams struct {
 	LastTickIdx        string
 }
 
-func getPoolsListQuery(allowSubgraphError bool, lastCreatedAtTimestamp *big.Int, first, skip int) string {
+func getDiscoveryPoolsListQuery(allowSubgraphError bool, first, skip int, minTVLUSD, minVolumeUSD float64) string {
 	var tpl bytes.Buffer
-	td := PoolsListQueryParams{
-		allowSubgraphError,
-		lastCreatedAtTimestamp,
-		first,
-		skip,
+	td := DiscoveryPoolsListQueryParams{
+		AllowSubgraphError: allowSubgraphError,
+		First:              first,
+		Skip:               skip,
+		MinTVLUSD:          minTVLUSD,
+		MinVolumeUSD:       minVolumeUSD,
 	}
 
-	// Add subgraphError: allow
-	t, err := template.New("poolsListQuery").Parse(`{
+	t, err := template.New("discoveryPoolsListQuery").Parse(`{
 		pools(
 			{{ if .AllowSubgraphError }}subgraphError: allow,{{ end }}
-			where: {
-				createdAtTimestamp_gte: {{ .LastCreatedAtTimestamp }}
-			},
 			first: {{ .First }},
 			skip: {{ .Skip }},
-			orderBy: createdAtTimestamp,
-			orderDirection: asc
+			where: {
+				liquidity_not: "0"
+				{{ if gt .MinTVLUSD 0.0 }}totalValueLockedUSD_gt: {{ .MinTVLUSD }},{{ end }}
+				{{ if gt .MinVolumeUSD 0.0 }}volumeUSD_gt: {{ .MinVolumeUSD }},{{ end }}
+			},
+			orderBy: totalValueLockedUSD,
+			orderDirection: desc
 		) {
 			id
+			feeTier
 			liquidity
 			sqrtPrice
-			createdAtTimestamp
 			tick
-			feeTier
+			createdAtTimestamp
+			totalValueLockedUSD
+			volumeUSD
 			token0 {
 				id
 				name

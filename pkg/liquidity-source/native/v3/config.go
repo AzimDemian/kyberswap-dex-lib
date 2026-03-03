@@ -9,7 +9,9 @@ type Config struct {
 	AllowSubgraphError bool        `json:"allowSubgraphError,omitempty"`
 	TickLensAddress    string      `json:"tickLensAddress,omitempty"`
 	AlwaysUseTickLens  bool        `json:"alwaysUseTickLens,omitempty"` // instead of fetching from subgraph
-	ExecutorAddress    string      `json:"executorAddress,omitempty"`
+	ExecutorAddress       string      `json:"executorAddress,omitempty"`
+	DiscoveryMinTVLUSD    float64     `json:"discoveryMinTVLUSD,omitempty"`
+	DiscoveryMinVolumeUSD float64     `json:"discoveryMinVolumeUSD,omitempty"`
 }
 
 func (c *Config) IsAllowSubgraphError() bool {

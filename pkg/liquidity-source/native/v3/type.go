@@ -123,7 +123,9 @@ type (
 
 	Gas = uniswapv3.Gas
 
-	Metadata = uniswapv3.Metadata
+	Metadata struct {
+		Skip int `json:"skip"`
+	}
 
 	TickResp = ticklens.TickResp
 

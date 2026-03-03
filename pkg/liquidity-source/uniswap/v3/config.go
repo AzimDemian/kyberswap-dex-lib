@@ -11,6 +11,9 @@ type Config struct {
 	PreGenesisPoolPath string      `json:"preGenesisPoolPath,omitempty"`
 	AlwaysUseTickLens  bool        `json:"alwaysUseTickLens,omitempty"` // instead of fetching from subgraph
 
+	DiscoveryMinTVLUSD    float64 `json:"discoveryMinTVLUSD,omitempty"`
+	DiscoveryMinVolumeUSD float64 `json:"discoveryMinVolumeUSD,omitempty"`
+
 	preGenesisPoolIDs []string
 }
 

@@ -25,7 +25,7 @@ type SwapInfo struct {
 }
 
 type Metadata struct {
-	LastCreatedAtTimestamp *big.Int `json:"lastCreatedAtTimestamp"`
+	Skip int `json:"skip"`
 }
 
 type Token struct {
@@ -36,12 +36,14 @@ type Token struct {
 }
 
 type SubgraphPool struct {
-	ID                 string `json:"id"`
-	FeeTier            string `json:"feeTier"`
-	PoolType           string `json:"poolType"`
-	CreatedAtTimestamp string `json:"createdAtTimestamp"`
-	Token0             Token  `json:"token0"`
-	Token1             Token  `json:"token1"`
+	ID                  string `json:"id"`
+	FeeTier             string `json:"feeTier"`
+	PoolType            string `json:"poolType"`
+	CreatedAtTimestamp  string `json:"createdAtTimestamp"`
+	TotalValueLockedUSD string `json:"totalValueLockedUSD"`
+	VolumeUSD           string `json:"volumeUSD"`
+	Token0              Token  `json:"token0"`
+	Token1              Token  `json:"token1"`
 }
 
 type TickResp = ticklens.TickResp

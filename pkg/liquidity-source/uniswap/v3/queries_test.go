@@ -2,89 +2,35 @@ package uniswapv3
 
 import (
 	"fmt"
-	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestQueriesUniswapV3_GetPoolsListQuery(t *testing.T) {
+func TestQueriesUniswapV3_GetDiscoveryPoolsListQuery(t *testing.T) {
 	t.Parallel()
 
-	t.Run("it should return correct query when allowing subgraph error", func(t *testing.T) {
-		expect := fmt.Sprintf(`{
-		pools(
-			subgraphError: allow,
-			where: {
-				createdAtTimestamp_gte: %v
-			},
-			first: %v,
-			skip: %v,
-			orderBy: createdAtTimestamp,
-			orderDirection: asc
-		) {
-			id
-			liquidity
-			sqrtPrice
-			createdAtTimestamp
-			tick
-			feeTier
-			token0 {
-				id
-				name
-				symbol
-				decimals
-			}
-			token1 {
-				id
-				name
-				symbol
-				decimals
-			}
-		}
-	}`, big.NewInt(0), 1000, 0)
+	t.Run("it should include subgraphError and TVL/volume filters when set", func(t *testing.T) {
+		actual := getDiscoveryPoolsListQuery(true, 1000, 0, 10000.0, 5000.0)
 
-		actual := getPoolsListQuery(true, big.NewInt(0), 1000, 0)
-
-		assert.Equal(t, expect, actual)
+		assert.Contains(t, actual, "subgraphError: allow")
+		assert.Contains(t, actual, "totalValueLockedUSD_gt:")
+		assert.Contains(t, actual, "volumeUSD_gt:")
+		assert.Contains(t, actual, "orderBy: totalValueLockedUSD")
+		assert.Contains(t, actual, "orderDirection: desc")
+		assert.Contains(t, actual, `liquidity_not: "0"`)
 	})
 
-	t.Run("it should return correct query when subgraph error is not allowed", func(t *testing.T) {
-		expect := fmt.Sprintf(`{
-		pools(
-			
-			where: {
-				createdAtTimestamp_gte: %v
-			},
-			first: %v,
-			skip: %v,
-			orderBy: createdAtTimestamp,
-			orderDirection: asc
-		) {
-			id
-			liquidity
-			sqrtPrice
-			createdAtTimestamp
-			tick
-			feeTier
-			token0 {
-				id
-				name
-				symbol
-				decimals
-			}
-			token1 {
-				id
-				name
-				symbol
-				decimals
-			}
-		}
-	}`, big.NewInt(0), 1000, 0)
+	t.Run("it should omit subgraphError and filters when not set", func(t *testing.T) {
+		actual := getDiscoveryPoolsListQuery(false, 1000, 0, 0, 0)
 
-		actual := getPoolsListQuery(false, big.NewInt(0), 1000, 0)
-
-		assert.Equal(t, expect, actual)
+		assert.False(t, strings.Contains(actual, "subgraphError: allow"))
+		assert.False(t, strings.Contains(actual, "totalValueLockedUSD_gt:"))
+		assert.False(t, strings.Contains(actual, "volumeUSD_gt:"))
+		assert.Contains(t, actual, "orderBy: totalValueLockedUSD")
+		assert.Contains(t, actual, "orderDirection: desc")
+		assert.Contains(t, actual, `liquidity_not: "0"`)
 	})
 }
 

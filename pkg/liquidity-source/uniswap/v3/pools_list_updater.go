@@ -3,10 +3,8 @@ package uniswapv3
 import (
 	"context"
 	"fmt"
-	"math/big"
 	"strconv"
 
-	"github.com/KyberNetwork/blockchain-toolkit/integer"
 	"github.com/KyberNetwork/ethrpc"
 	"github.com/KyberNetwork/kutils"
 	"github.com/KyberNetwork/logger"
@@ -39,10 +37,16 @@ func NewPoolsListUpdater(
 	}
 }
 
-func (d *PoolsListUpdater) getPoolsList(ctx context.Context, lastCreatedAtTimestamp *big.Int, first, skip int) ([]SubgraphPool, error) {
+func (d *PoolsListUpdater) getPoolsList(ctx context.Context, skip int) ([]SubgraphPool, error) {
 	allowSubgraphError := d.config.IsAllowSubgraphError()
 
-	req := graphqlpkg.NewRequest(getPoolsListQuery(allowSubgraphError, lastCreatedAtTimestamp, first, skip))
+	req := graphqlpkg.NewRequest(getDiscoveryPoolsListQuery(
+		allowSubgraphError,
+		graphFirstLimit,
+		skip,
+		d.config.DiscoveryMinTVLUSD,
+		d.config.DiscoveryMinVolumeUSD,
+	))
 
 	var response struct {
 		Pools []SubgraphPool `json:"pools"`
@@ -64,9 +68,7 @@ func (d *PoolsListUpdater) getPoolsList(ctx context.Context, lastCreatedAtTimest
 }
 
 func (d *PoolsListUpdater) GetNewPools(ctx context.Context, metadataBytes []byte) ([]entity.Pool, []byte, error) {
-	metadata := Metadata{
-		LastCreatedAtTimestamp: integer.Zero(),
-	}
+	metadata := Metadata{}
 	if len(metadataBytes) != 0 {
 		err := json.Unmarshal(metadataBytes, &metadata)
 		if err != nil {
@@ -74,7 +76,7 @@ func (d *PoolsListUpdater) GetNewPools(ctx context.Context, metadataBytes []byte
 		}
 	}
 
-	subgraphPools, err := d.getPoolsList(ctx, metadata.LastCreatedAtTimestamp, graphFirstLimit, 0)
+	subgraphPools, err := d.getPoolsList(ctx, metadata.Skip)
 	if err != nil {
 		logger.WithFields(logger.Fields{
 			"error": err,
@@ -168,21 +170,8 @@ func (d *PoolsListUpdater) GetNewPools(ctx context.Context, metadataBytes []byte
 		pools = append(pools, newPool)
 	}
 
-	// Track the last pool's CreatedAtTimestamp
-	var lastCreatedAtTimestamp = metadata.LastCreatedAtTimestamp
-	if len(subgraphPools) > 0 {
-		lastSubgraphPoolIndex := len(subgraphPools) - 1
-		ts, ok := new(big.Int).SetString(subgraphPools[lastSubgraphPoolIndex].CreatedAtTimestamp, 10)
-		if !ok {
-			return nil, metadataBytes, fmt.Errorf("invalid CreatedAtTimestamp: %v, pool: %v",
-				subgraphPools[lastSubgraphPoolIndex].CreatedAtTimestamp, subgraphPools[lastSubgraphPoolIndex].ID)
-		}
-
-		lastCreatedAtTimestamp = ts
-	}
-
 	newMetadataBytes, err := json.Marshal(Metadata{
-		LastCreatedAtTimestamp: lastCreatedAtTimestamp,
+		Skip: metadata.Skip + len(subgraphPools),
 	})
 	if err != nil {
 		return nil, metadataBytes, err
