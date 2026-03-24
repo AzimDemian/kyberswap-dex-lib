@@ -7,3 +7,6 @@ var stateViewABIJson []byte
 
 //go:embed abi/PoolManager.json
 var poolManagerABIJson []byte
+
+//go:embed list_of_pools.json
+var embeddedPoolsListJSON []byte

@@ -22,6 +22,12 @@ type Config struct {
 	FetchTickFromStateView bool // instead of fetching from subgraph
 
 	HookConfigs map[common.Address]any `json:"hookConfigs" mapstructure:"hookConfigs"`
+
+	// Pool discovery modes (both can be enabled simultaneously; results are deduplicated)
+	EnableSubgraphUpdater bool   `json:"enableSubgraphUpdater"` // discover pools via subgraph (default path)
+	EnableRPCUpdater      bool   `json:"enableRPCUpdater"`      // discover pools via RPC using list_of_pools.json
+	PoolManagerAddress    string `json:"poolManagerAddress"`    // PoolManager contract address for eth_getLogs filter
+	PoolsFile             string `json:"poolsFile"`             // path to pools JSON file; empty = use embedded list_of_pools.json
 }
 
 func (c *Config) IsAllowSubgraphError() bool {
