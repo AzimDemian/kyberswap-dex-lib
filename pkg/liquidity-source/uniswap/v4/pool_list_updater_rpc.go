@@ -2,7 +2,6 @@ package uniswapv4
 
 import (
 	"context"
-	"math/big"
 	"os"
 	"time"
 
@@ -159,7 +158,7 @@ func (u *PoolsListUpdater) fetchTokenDecimals(ctx context.Context, addresses []c
 		return result, nil
 	}
 
-	decimals := make([]*big.Int, len(addresses))
+	decimals := make([]uint8, len(addresses))
 	req := u.ethrpcClient.NewRequest().SetContext(ctx)
 
 	for i, addr := range addresses {
@@ -175,9 +174,7 @@ func (u *PoolsListUpdater) fetchTokenDecimals(ctx context.Context, addresses []c
 	}
 
 	for i, addr := range addresses {
-		if decimals[i] != nil {
-			result[addr] = uint8(decimals[i].Uint64())
-		}
+		result[addr] = decimals[i]
 	}
 	return result, nil
 }

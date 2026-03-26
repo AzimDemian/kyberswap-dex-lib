@@ -121,7 +121,7 @@ func (d *PoolsListUpdater) fetchTokenDecimals(ctx context.Context, addresses []c
 		return result, nil
 	}
 
-	decimals := make([]*big.Int, len(addresses))
+	decimals := make([]uint8, len(addresses))
 	req := d.ethrpcClient.NewRequest().SetContext(ctx)
 	for i, addr := range addresses {
 		req.AddCall(&ethrpc.Call{
@@ -136,9 +136,7 @@ func (d *PoolsListUpdater) fetchTokenDecimals(ctx context.Context, addresses []c
 	}
 
 	for i, addr := range addresses {
-		if decimals[i] != nil {
-			result[addr] = uint8(decimals[i].Uint64())
-		}
+		result[addr] = decimals[i]
 	}
 	return result, nil
 }
