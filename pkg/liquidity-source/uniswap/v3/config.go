@@ -12,6 +12,11 @@ type Config struct {
 	AlwaysUseTickLens  bool        `json:"alwaysUseTickLens,omitempty"` // instead of fetching from subgraph
 
 	preGenesisPoolIDs []string
+
+	AllowSubgraphFetch bool     `json:"allowSubgraphFetch,omitempty"`
+	AllowRPCFetch      bool     `json:"allowRPCFetch,omitempty"`
+	StaticPoolList     []string `json:"staticPoolList,omitempty"`
+	RPCBatchSize       int      `json:"rpcBatchSize,omitempty"`
 }
 
 func (c *Config) IsAllowSubgraphError() bool {

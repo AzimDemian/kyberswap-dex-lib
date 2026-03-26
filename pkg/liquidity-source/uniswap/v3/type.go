@@ -26,6 +26,7 @@ type SwapInfo struct {
 
 type Metadata struct {
 	LastCreatedAtTimestamp *big.Int `json:"lastCreatedAtTimestamp"`
+	LastProcessedRPCIndex  int      `json:"lastProcessedRPCIndex"`
 }
 
 type Token struct {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 
 	"github.com/KyberNetwork/blockchain-toolkit/integer"
 	"github.com/KyberNetwork/ethrpc"
@@ -68,127 +69,136 @@ func (d *PoolsListUpdater) GetNewPools(ctx context.Context, metadataBytes []byte
 		LastCreatedAtTimestamp: integer.Zero(),
 	}
 	if len(metadataBytes) != 0 {
-		err := json.Unmarshal(metadataBytes, &metadata)
-		if err != nil {
+		if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
 			return nil, metadataBytes, err
 		}
 	}
 
-	subgraphPools, err := d.getPoolsList(ctx, metadata.LastCreatedAtTimestamp, graphFirstLimit, 0)
-	if err != nil {
-		logger.WithFields(logger.Fields{
-			"error": err,
-		}).Errorf("failed to get pools list from subgraph")
-		return nil, metadataBytes, err
-	}
+	var subgraphPools, rpcPools []entity.Pool
 
-	numSubgraphPools := len(subgraphPools)
-
-	logger.Infof("got %v subgraph pools from %s subgraph", numSubgraphPools, d.config.DexID)
-
-	tickSpacings, _ := FetchTickSpacings(
-		ctx,
-		lo.Map(subgraphPools, func(item SubgraphPool, _ int) string { return item.ID }),
-		d.ethrpcClient,
-		abis.UniswapV3PoolABI,
-		methodTickSpacing,
-	)
-
-	pools := make([]entity.Pool, 0, len(subgraphPools))
-	for _, p := range subgraphPools {
-		tokens := make([]*entity.PoolToken, 0, 2)
-		reserves := make([]string, 0, 2)
-
-		extraField := Extra{
-			TickSpacing: tickSpacings[p.ID],
-		}
-		staticField := StaticExtra{
-			PoolId: p.ID,
-		}
-
-		if p.Token0.Address != "" {
-			token0Decimals, err := kutils.Atou[uint8](p.Token0.Decimals)
-
-			if err != nil {
-				token0Decimals = defaultTokenDecimals
-			}
-
-			tokenModel := entity.PoolToken{
-				Address:   p.Token0.Address,
-				Symbol:    p.Token0.Symbol,
-				Decimals:  token0Decimals,
-				Swappable: true,
-			}
-
-			tokens = append(tokens, &tokenModel)
-			reserves = append(reserves, "0")
-		}
-
-		if p.Token1.Address != "" {
-			token1Decimals, err := kutils.Atou[uint8](p.Token1.Decimals)
-
-			if err != nil {
-				token1Decimals = defaultTokenDecimals
-			}
-
-			tokenModel := entity.PoolToken{
-				Address:   p.Token1.Address,
-				Symbol:    p.Token1.Symbol,
-				Decimals:  token1Decimals,
-				Swappable: true,
-			}
-
-			tokens = append(tokens, &tokenModel)
-			reserves = append(reserves, "0")
-		}
-
-		var swapFee, _ = strconv.ParseFloat(p.FeeTier, 64)
-
-		createdAtTimestamp, err := kutils.Atoi[int64](p.CreatedAtTimestamp)
+	if d.config.AllowSubgraphFetch {
+		sgPools, err := d.getPoolsList(ctx, metadata.LastCreatedAtTimestamp, graphFirstLimit, 0)
 		if err != nil {
-			return nil, metadataBytes, fmt.Errorf("invalid CreatedAtTimestamp: %v, pool: %v", p.CreatedAtTimestamp, p.ID)
+			logger.WithFields(logger.Fields{
+				"error": err,
+			}).Errorf("failed to get pools list from subgraph")
+			return nil, metadataBytes, err
 		}
 
-		extraBytes, _ := json.Marshal(extraField)
-		staticBytes, _ := json.Marshal(staticField)
-		var newPool = entity.Pool{
-			Address:      p.ID,
-			ReserveUsd:   0,
-			AmplifiedTvl: 0,
-			SwapFee:      swapFee,
-			Exchange:     d.config.DexID,
-			Type:         DexTypeUniswapV3,
-			Timestamp:    createdAtTimestamp,
-			Reserves:     reserves,
-			Tokens:       tokens,
-			Extra:        string(extraBytes),
-			StaticExtra:  string(staticBytes),
+		logger.Infof("got %v subgraph pools from %s subgraph", len(sgPools), d.config.DexID)
+
+		tickSpacings, _ := FetchTickSpacings(
+			ctx,
+			lo.Map(sgPools, func(item SubgraphPool, _ int) string { return item.ID }),
+			d.ethrpcClient,
+			abis.UniswapV3PoolABI,
+			methodTickSpacing,
+		)
+
+		for _, p := range sgPools {
+			tokens := make([]*entity.PoolToken, 0, 2)
+			reserves := make([]string, 0, 2)
+
+			extraField := Extra{TickSpacing: tickSpacings[p.ID]}
+			staticField := StaticExtra{PoolId: p.ID}
+
+			if p.Token0.Address != "" {
+				token0Decimals, err := kutils.Atou[uint8](p.Token0.Decimals)
+				if err != nil {
+					token0Decimals = defaultTokenDecimals
+				}
+				tokens = append(tokens, &entity.PoolToken{
+					Address: p.Token0.Address, Symbol: p.Token0.Symbol,
+					Decimals: token0Decimals, Swappable: true,
+				})
+				reserves = append(reserves, "0")
+			}
+
+			if p.Token1.Address != "" {
+				token1Decimals, err := kutils.Atou[uint8](p.Token1.Decimals)
+				if err != nil {
+					token1Decimals = defaultTokenDecimals
+				}
+				tokens = append(tokens, &entity.PoolToken{
+					Address: p.Token1.Address, Symbol: p.Token1.Symbol,
+					Decimals: token1Decimals, Swappable: true,
+				})
+				reserves = append(reserves, "0")
+			}
+
+			swapFee, _ := strconv.ParseFloat(p.FeeTier, 64)
+			createdAtTimestamp, err := kutils.Atoi[int64](p.CreatedAtTimestamp)
+			if err != nil {
+				return nil, metadataBytes, fmt.Errorf("invalid CreatedAtTimestamp: %v, pool: %v", p.CreatedAtTimestamp, p.ID)
+			}
+
+			extraBytes, _ := json.Marshal(extraField)
+			staticBytes, _ := json.Marshal(staticField)
+			subgraphPools = append(subgraphPools, entity.Pool{
+				Address:     p.ID,
+				SwapFee:     swapFee,
+				Exchange:    d.config.DexID,
+				Type:        DexTypeUniswapV3,
+				Timestamp:   createdAtTimestamp,
+				Reserves:    reserves,
+				Tokens:      tokens,
+				Extra:       string(extraBytes),
+				StaticExtra: string(staticBytes),
+			})
 		}
 
-		pools = append(pools, newPool)
+		// Update subgraph metadata
+		if len(sgPools) > 0 {
+			last := sgPools[len(sgPools)-1]
+			ts, ok := new(big.Int).SetString(last.CreatedAtTimestamp, 10)
+			if !ok {
+				return nil, metadataBytes, fmt.Errorf("invalid CreatedAtTimestamp: %v, pool: %v", last.CreatedAtTimestamp, last.ID)
+			}
+			metadata.LastCreatedAtTimestamp = ts
+		}
 	}
 
-	// Track the last pool's CreatedAtTimestamp
-	var lastCreatedAtTimestamp = metadata.LastCreatedAtTimestamp
-	if len(subgraphPools) > 0 {
-		lastSubgraphPoolIndex := len(subgraphPools) - 1
-		ts, ok := new(big.Int).SetString(subgraphPools[lastSubgraphPoolIndex].CreatedAtTimestamp, 10)
-		if !ok {
-			return nil, metadataBytes, fmt.Errorf("invalid CreatedAtTimestamp: %v, pool: %v",
-				subgraphPools[lastSubgraphPoolIndex].CreatedAtTimestamp, subgraphPools[lastSubgraphPoolIndex].ID)
+	if d.config.AllowRPCFetch {
+		var (
+			nextIndex int
+			err       error
+		)
+		rpcPools, nextIndex, err = d.getPoolsFromRPC(ctx, metadata.LastProcessedRPCIndex, graphFirstLimit)
+		if err != nil {
+			return nil, metadataBytes, err
 		}
-
-		lastCreatedAtTimestamp = ts
+		metadata.LastProcessedRPCIndex = nextIndex
 	}
 
-	newMetadataBytes, err := json.Marshal(Metadata{
-		LastCreatedAtTimestamp: lastCreatedAtTimestamp,
-	})
+	pools := deduplicatePools(subgraphPools, rpcPools)
+
+	newMetadataBytes, err := json.Marshal(metadata)
 	if err != nil {
 		return nil, metadataBytes, err
 	}
 
-	logger.Infof("got %v %s pools", len(pools), d.config.DexID)
+	logger.WithFields(logger.Fields{
+		"dexId":         d.config.DexID,
+		"pools":         len(pools),
+		"subgraphPools": len(subgraphPools),
+		"rpcPools":      len(rpcPools),
+	}).Info("finished getting new pools")
 
 	return pools, newMetadataBytes, nil
+}
+
+// deduplicatePools merges pool slices, keeping the first occurrence of each address.
+func deduplicatePools(sources ...[]entity.Pool) []entity.Pool {
+	seen := make(map[string]struct{})
+	var result []entity.Pool
+	for _, pools := range sources {
+		for _, p := range pools {
+			addr := strings.ToLower(p.Address)
+			if _, exists := seen[addr]; !exists {
+				seen[addr] = struct{}{}
+				result = append(result, p)
+			}
+		}
+	}
+	return result
 }

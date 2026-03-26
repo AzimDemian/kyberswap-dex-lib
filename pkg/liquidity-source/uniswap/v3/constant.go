@@ -22,6 +22,9 @@ const (
 	methodGetSlot0     = "slot0"
 	methodTickSpacing  = "tickSpacing"
 	methodTicks        = "ticks"
+	methodToken0       = "token0"
+	methodToken1       = "token1"
+	methodFee          = "fee"
 )
 
 var (
