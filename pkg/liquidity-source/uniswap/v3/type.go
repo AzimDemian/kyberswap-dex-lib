@@ -25,8 +25,7 @@ type SwapInfo struct {
 }
 
 type Metadata struct {
-	LastCreatedAtTimestamp *big.Int `json:"lastCreatedAtTimestamp"`
-	LastProcessedRPCIndex  int      `json:"lastProcessedRPCIndex"`
+	LastProcessedRPCIndex int `json:"lastProcessedRPCIndex"`
 }
 
 type Token struct {
@@ -36,21 +35,7 @@ type Token struct {
 	Decimals string `json:"decimals"`
 }
 
-type SubgraphPool struct {
-	ID                 string `json:"id"`
-	FeeTier            string `json:"feeTier"`
-	PoolType           string `json:"poolType"`
-	CreatedAtTimestamp string `json:"createdAtTimestamp"`
-	Token0             Token  `json:"token0"`
-	Token1             Token  `json:"token1"`
-}
-
 type TickResp = ticklens.TickResp
-
-type SubgraphPoolTicks struct {
-	ID    string     `json:"id"`
-	Ticks []TickResp `json:"ticks"`
-}
 
 type StaticExtra struct {
 	PoolId string `json:"poolId"`
@@ -87,10 +72,6 @@ type ExtraTickU256 struct {
 type Slot0 struct {
 	SqrtPriceX96 *big.Int
 	Tick         *big.Int
-}
-
-type preGenesisPool struct {
-	ID string `json:"id"`
 }
 
 type FetchRPCResult struct {

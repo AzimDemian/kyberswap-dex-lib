@@ -2,7 +2,6 @@ package uniswapv3
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math/big"
 	"sort"
@@ -23,64 +22,28 @@ import (
 	pooltrack "github.com/KyberNetwork/kyberswap-dex-lib/pkg/source/pool/tracker"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/abi"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/eth"
-	graphqlpkg "github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/graphql"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/metrics"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/ticklens"
 )
 
-var _ = pooltrack.RegisterFactoryCEG(DexTypeUniswapV3, NewTracker)
-var _ = pooltrack.RegisterTicksBasedFactoryCEG(DexTypeUniswapV3, NewTracker)
+var _ = pooltrack.RegisterFactoryCE(DexTypeUniswapV3, NewTracker)
+var _ = pooltrack.RegisterTicksBasedFactoryCE(DexTypeUniswapV3, NewTracker)
 
 type Tracker struct {
-	config        *Config
-	ethrpcClient  *ethrpc.Client
-	graphqlClient *graphqlpkg.Client
+	config       *Config
+	ethrpcClient *ethrpc.Client
 }
 
 func NewTracker(
 	config *Config,
 	ethrpcClient *ethrpc.Client,
-	graphqlClient *graphqlpkg.Client,
 ) (*Tracker, error) {
-	initializedCfg, err := initializeConfig(config)
-	if err != nil {
-		return nil, err
-	}
-
 	return &Tracker{
-		config:        initializedCfg,
-		ethrpcClient:  ethrpcClient,
-		graphqlClient: graphqlClient,
+		config:       config,
+		ethrpcClient: ethrpcClient,
 	}, nil
 }
 
-func initializeConfig(cfg *Config) (*Config, error) {
-	if cfg.PreGenesisPoolPath == "" {
-		return cfg, nil
-	}
-
-	byteValue, ok := BytesByPath[cfg.PreGenesisPoolPath]
-	if !ok {
-		// Misconfiguration in the code, should check again
-		return nil, errors.New("misconfigured PreGenesisPoolPath")
-	}
-
-	var pools []preGenesisPool
-	if err := json.Unmarshal(byteValue, &pools); err != nil {
-		logger.WithFields(logger.Fields{
-			"error": err,
-		}).Error("failed to parse pools")
-		return nil, err
-	}
-
-	logger.Infof("got %v pools from file: %s", len(pools), cfg.PreGenesisPoolPath)
-
-	for _, p := range pools {
-		cfg.preGenesisPoolIDs = append(cfg.preGenesisPoolIDs, p.ID)
-	}
-
-	return cfg, nil
-}
 
 func (t *Tracker) GetNewState(ctx context.Context, p entity.Pool, logs []ethtypes.Log,
 	blockHeaders map[uint64]entity.BlockHeader) (entity.Pool, error) {
@@ -642,27 +605,12 @@ func (t *Tracker) GetNewPoolState(ctx context.Context, p entity.Pool, _ poolpkg.
 	})
 	g.Go(func(context.Context) error {
 		var err error
-		// Ad-hoc logic to handle edge case on Optimism
-		// Link to issue: https://www.notion.so/kybernetwork/Aggregator-1-20-defect-1caec6062f9d4da0918fc3443e6e1963#0810d1462cc14f0a9465f935c9e641fe
-		// TLDR: Optimism has some pre-genesis Uniswap V3 pool. Subgraph does not have data for these pools
-		// So we have to fetch ticks data from the TickLens smart contract (which is slower).
-		if t.config.AlwaysUseTickLens || lo.Contains[string](t.config.preGenesisPoolIDs, p.Address) {
-			poolTicks, err = ticklens.GetPoolTicksFromSC(ctx, t.ethrpcClient, t.config.TickLensAddress, p, nil)
-			if err != nil {
-				l.WithFields(logger.Fields{
-					"error": err,
-				}).Error("failed to call SC for pool ticks")
-			}
-		} else {
-			// If pool is not pre-genesis, fetch from subgraph
-			poolTicks, err = t.getPoolTicks(ctx, p.Address)
-			if err != nil {
-				l.WithFields(logger.Fields{
-					"error": err,
-				}).Error("failed to query subgraph for pool ticks")
-			}
+		poolTicks, err = ticklens.GetPoolTicksFromSC(ctx, t.ethrpcClient, t.config.TickLensAddress, p, nil)
+		if err != nil {
+			l.WithFields(logger.Fields{
+				"error": err,
+			}).Error("failed to call SC for pool ticks")
 		}
-
 		return err
 	})
 
@@ -786,56 +734,3 @@ func (t *Tracker) FetchRPCData(ctx context.Context, p *entity.Pool, blockNumber 
 	}, err
 }
 
-func (t *Tracker) getPoolTicks(ctx context.Context, poolAddress string) ([]TickResp, error) {
-	l := logger.WithFields(logger.Fields{
-		"poolAddress": poolAddress,
-		"dexID":       t.config.DexID,
-	})
-
-	allowSubgraphError := t.config.IsAllowSubgraphError()
-	lastTickIdx := ""
-	var ticks []TickResp
-
-	for {
-		req := graphqlpkg.NewRequest(getPoolTicksQuery(allowSubgraphError, poolAddress, lastTickIdx))
-
-		var resp struct {
-			Ticks []TickResp `json:"ticks"`
-		}
-
-		if err := t.graphqlClient.Run(ctx, req, &resp); err != nil {
-			// Workaround at the moment to live with the error subgraph on Arbitrum
-			if allowSubgraphError {
-				if resp.Ticks == nil {
-					l.WithFields(logger.Fields{
-						"error":              err,
-						"allowSubgraphError": allowSubgraphError,
-					}).Error("failed to query subgraph")
-
-					return nil, err
-				}
-			} else {
-				l.WithFields(logger.Fields{
-					"error":              err,
-					"allowSubgraphError": allowSubgraphError,
-				}).Error("failed to query subgraph")
-
-				return nil, err
-			}
-		}
-
-		if len(resp.Ticks) == 0 {
-			break
-		}
-
-		ticks = append(ticks, resp.Ticks...)
-
-		if len(resp.Ticks) < graphFirstLimit {
-			break
-		}
-
-		lastTickIdx = resp.Ticks[len(resp.Ticks)-1].TickIdx
-	}
-
-	return ticks, nil
-}

@@ -108,6 +108,13 @@ func RegisterFactoryCE[C any, P IPoolsTracker](poolType string, factory func(*C,
 	})
 }
 
+// RegisterTicksBasedFactoryCE registers a factory function for a ticks-based pool tracker with config and ethrpcClient
+func RegisterTicksBasedFactoryCE[C any, P ITicksBasedPoolTracker](poolType string, factory func(*C, *ethrpc.Client) (P, error)) bool {
+	return RegisterTicksBasedFactory(poolType, func(params PoolsTrackerParams[C]) (ITicksBasedPoolTracker, error) {
+		return factory(params.Cfg, params.EthrpcClient)
+	})
+}
+
 // RegisterFactoryCE0 registers a factory function for a pool tracker with config and ethrpcClient
 func RegisterFactoryCE0[C any, P IPoolsTracker](poolType string, factory func(*C, *ethrpc.Client) P) bool {
 	return RegisterFactory(poolType, func(params PoolsTrackerParams[C]) (IPoolsTracker, error) {

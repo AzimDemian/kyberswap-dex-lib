@@ -3,6 +3,7 @@ package uniswapv3
 import (
 	"context"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/KyberNetwork/ethrpc"
@@ -162,15 +163,15 @@ func buildPoolFromRPCData(
 	staticBytes, _ := json.Marshal(staticField)
 
 	return entity.Pool{
-		Address:   address,
+		Address:   strings.ToLower(address),
 		SwapFee:   float64(pd.fee.Uint64()),
 		Exchange:  cfg.DexID,
 		Type:      DexTypeUniswapV3,
 		Timestamp: time.Now().Unix(),
 		Reserves:  entity.PoolReserves{"0", "0"},
 		Tokens: []*entity.PoolToken{
-			{Address: pd.token0.Hex(), Decimals: token0Decimals, Swappable: true},
-			{Address: pd.token1.Hex(), Decimals: token1Decimals, Swappable: true},
+			{Address: strings.ToLower(pd.token0.Hex()), Decimals: token0Decimals, Swappable: true},
+			{Address: strings.ToLower(pd.token1.Hex()), Decimals: token1Decimals, Swappable: true},
 		},
 		Extra:       string(extraBytes),
 		StaticExtra: string(staticBytes),
