@@ -75,7 +75,7 @@ func (t *PoolTracker) getNewPoolState(
 
 		xcpProfit, virtualPrice, allowedExtraProfit, adjustmentStep, lpSupply *big.Int
 
-		lastPricesTimestamp, maTime *big.Int
+		lastPricesTimestamp *big.Int
 
 		balances = make([]*big.Int, len(p.Tokens))
 
@@ -190,12 +190,15 @@ func (t *PoolTracker) getNewPoolState(
 		Params: nil,
 	}, []any{&lastPricesTimestamp})
 
+	// Fetch packed_rebalancing_params to get the RAW ma_time.
+	// The ma_time() getter applies * 694 / 1000 for display, but the EMA uses the raw value.
+	var packedRebalancingParams *big.Int
 	calls.AddCall(&ethrpc.Call{
 		ABI:    curveTricryptoNGABI,
 		Target: p.Address,
-		Method: poolMethodMaTime,
+		Method: poolMethodPackedRebalancingParams,
 		Params: nil,
-	}, []any{&maTime})
+	}, []any{&packedRebalancingParams})
 
 	for i := range p.Tokens {
 		calls.AddCall(&ethrpc.Call{
@@ -252,7 +255,9 @@ func (t *PoolTracker) getNewPoolState(
 		AllowedExtraProfit:  number.SetFromBig(allowedExtraProfit),
 		AdjustmentStep:      number.SetFromBig(adjustmentStep),
 		LastPricesTimestamp:      lastPricesTimestamp.Int64(),
-		MaTime:                  number.SetFromBig(maTime),
+		// Extract raw ma_time from packed_rebalancing_params (lowest 64 bits).
+		// The ma_time() getter applies * 694 / 1000 for display; EMA uses the raw value.
+		MaTime:                  number.SetFromBig(new(big.Int).And(packedRebalancingParams, new(big.Int).SetUint64(^uint64(0)))),
 		OracleSnapshotTimestamp: time.Now().Unix(),
 	}
 	extra.PriceScale = make([]uint256.Int, len(priceScales))

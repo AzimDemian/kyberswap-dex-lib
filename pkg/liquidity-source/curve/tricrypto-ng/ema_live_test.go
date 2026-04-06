@@ -176,7 +176,7 @@ func computeEMAuint256(
 
 	dt := blockTs - snapshotTs
 
-	// exponent = -(dt * 1e18 / maTime) — same as simulator's currentPriceOracle()
+	// exponent = -(dt * ln(2) * 1e18 / maTime) — half-life based EMA
 	dtI256 := new(int256.Int).SetUint64(dt)
 	maTimeI256 := new(int256.Int).SetUint64(maTime.Uint64())
 	exponent := i256.Neg(i256.Div(i256.Mul(dtI256, I_1e18), maTimeI256))

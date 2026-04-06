@@ -192,6 +192,8 @@ func (t *PoolSimulator) currentPriceOracle() []uint256.Int {
 	}
 
 	dt := now - baseTime
+	// On-chain formula: exp(-dt * 1e18 / ma_time)
+	// ma_time is stored as time_in_seconds/ln(2), so ln(2) is already baked in.
 	// exponent = -(dt * 1e18) / ma_time
 	dtI256 := new(int256.Int).SetInt64(dt)
 	maTimeI256 := new(int256.Int).SetUint64(t.Extra.MaTime.Uint64())
@@ -205,10 +207,17 @@ func (t *PoolSimulator) currentPriceOracle() []uint256.Int {
 	oneMinusAlpha := new(uint256.Int).Sub(U_1e18, alpha)
 	result := make([]uint256.Int, len(t.Extra.PriceOracle))
 	for i := range result {
-		// oracle[i] = (last_prices[i] * (1e18 - alpha) + stored_oracle[i] * alpha) / 1e18
-		// Single division to match on-chain Vyper: unsafe_div(lp * (1e18-a) + po * a, 1e18)
+		// Cap last_prices at 2 * price_scale, matching on-chain Vyper:
+		//   min(last_prices[k], 2 * price_scale[k]) * (10**18 - alpha) + price_oracle[k] * alpha
+		cappedLP := new(uint256.Int).Set(&t.Extra.LastPrices[i])
+		if i < len(t.Extra.PriceScale) {
+			cap := new(uint256.Int).Mul(&t.Extra.PriceScale[i], number.Number_2)
+			if cappedLP.Cmp(cap) > 0 {
+				cappedLP.Set(cap)
+			}
+		}
 		numerator := new(uint256.Int).Add(
-			number.SafeMul(&t.Extra.LastPrices[i], oneMinusAlpha),
+			number.SafeMul(cappedLP, oneMinusAlpha),
 			number.SafeMul(&t.Extra.PriceOracle[i], alpha),
 		)
 		result[i].Div(numerator, U_1e18)

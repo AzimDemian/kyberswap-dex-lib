@@ -77,7 +77,7 @@ func (t *PoolTracker) getNewPoolState(
 
 		xcpProfit, virtualPrice, allowedExtraProfit, adjustmentStep, lpSupply *big.Int
 
-		lastPricesTimestamp, maTime *big.Int
+		lastPricesTimestamp *big.Int
 
 		balances = make([]*big.Int, len(p.Tokens))
 
@@ -196,12 +196,13 @@ func (t *PoolTracker) getNewPoolState(
 		Params: nil,
 	}, []any{&lastPricesTimestamp})
 
+	var packedRebalancingParams *big.Int
 	calls.AddCall(&ethrpc.Call{
 		ABI:    curveTwocryptoNGABI,
 		Target: p.Address,
-		Method: poolMethodMaTime,
+		Method: poolMethodPackedRebalancingParams,
 		Params: nil,
-	}, []any{&maTime})
+	}, []any{&packedRebalancingParams})
 
 	for i := range p.Tokens {
 		calls.AddCall(&ethrpc.Call{
@@ -259,7 +260,8 @@ func (t *PoolTracker) getNewPoolState(
 		AdjustmentStep:      number.SetFromBig(adjustmentStep),
 		UseCustomMath:       UseCustomMath(math),
 		LastPricesTimestamp:      lastPricesTimestamp.Int64(),
-		MaTime:                  number.SetFromBig(maTime),
+		// Extract raw ma_time from packed_rebalancing_params (lowest 64 bits).
+		MaTime:                  number.SetFromBig(new(big.Int).And(packedRebalancingParams, new(big.Int).SetUint64(^uint64(0)))),
 		OracleSnapshotTimestamp: time.Now().Unix(),
 	}
 	extra.PriceScale = make([]uint256.Int, len(priceScales))
