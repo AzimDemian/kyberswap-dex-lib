@@ -77,6 +77,8 @@ func (t *PoolTracker) getNewPoolState(
 
 		xcpProfit, virtualPrice, allowedExtraProfit, adjustmentStep, lpSupply *big.Int
 
+		lastPricesTimestamp, maTime *big.Int
+
 		balances = make([]*big.Int, len(p.Tokens))
 
 		numDepCoins = len(p.Tokens) - 1 // other coins will have price based on the 1st coin
@@ -187,6 +189,20 @@ func (t *PoolTracker) getNewPoolState(
 		Params: nil,
 	}, []any{&math})
 
+	calls.AddCall(&ethrpc.Call{
+		ABI:    curveTwocryptoNGABI,
+		Target: p.Address,
+		Method: poolMethodLastPricesTimestamp,
+		Params: nil,
+	}, []any{&lastPricesTimestamp})
+
+	calls.AddCall(&ethrpc.Call{
+		ABI:    curveTwocryptoNGABI,
+		Target: p.Address,
+		Method: poolMethodMaTime,
+		Params: nil,
+	}, []any{&maTime})
+
 	for i := range p.Tokens {
 		calls.AddCall(&ethrpc.Call{
 			ABI:    curveTwocryptoNGABI,
@@ -240,8 +256,11 @@ func (t *PoolTracker) getNewPoolState(
 		XcpProfit:          number.SetFromBig(xcpProfit),
 		VirtualPrice:       number.SetFromBig(virtualPrice),
 		AllowedExtraProfit: number.SetFromBig(allowedExtraProfit),
-		AdjustmentStep:     number.SetFromBig(adjustmentStep),
-		UseCustomMath:      UseCustomMath(math),
+		AdjustmentStep:      number.SetFromBig(adjustmentStep),
+		UseCustomMath:       UseCustomMath(math),
+		LastPricesTimestamp:      lastPricesTimestamp.Int64(),
+		MaTime:                  number.SetFromBig(maTime),
+		OracleSnapshotTimestamp: time.Now().Unix(),
 	}
 	extra.PriceScale = make([]uint256.Int, len(priceScales))
 	lo.ForEach(priceScales, func(item *big.Int, i int) { extra.PriceScale[i].SetFromBig(item) })

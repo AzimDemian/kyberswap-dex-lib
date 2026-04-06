@@ -500,6 +500,17 @@
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "last_prices_timestamp",
+    "outputs": [
+      {
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "name": "arg0",

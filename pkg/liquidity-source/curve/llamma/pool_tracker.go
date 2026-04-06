@@ -54,15 +54,16 @@ func (t *PoolTracker) GetNewPoolState(
 	}
 
 	var (
-		basePrice   *big.Int
-		priceOracle *big.Int
-		fee         *big.Int
-		adminFee    *big.Int
-		adminFeesX  *big.Int
-		adminFeesY  *big.Int
-		activeBand  *big.Int
-		minBand     *big.Int
-		maxBand     *big.Int
+		basePrice            *big.Int
+		priceOracle          *big.Int
+		fee                  *big.Int
+		adminFee             *big.Int
+		adminFeesX           *big.Int
+		adminFeesY           *big.Int
+		activeBand           *big.Int
+		minBand              *big.Int
+		maxBand              *big.Int
+		lastPricesTimestamp  *big.Int
 
 		balances = make([]*big.Int, 2)
 	)
@@ -114,6 +115,11 @@ func (t *PoolTracker) GetNewPoolState(
 		Method: llammaMethodMaxBand,
 	}, []any{&maxBand})
 	calls.AddCall(&ethrpc.Call{
+		ABI:    CurveLlammaABI,
+		Target: p.Address,
+		Method: llammaMethodLastPricesTimestamp,
+	}, []any{&lastPricesTimestamp})
+	calls.AddCall(&ethrpc.Call{
 		ABI:    shared.ERC20ABI,
 		Target: p.Tokens[0].Address,
 		Method: shared.ERC20MethodBalanceOf,
@@ -137,17 +143,18 @@ func (t *PoolTracker) GetNewPoolState(
 	availableBalances := t.calcAvailableBalances(p.Tokens, bands)
 
 	extraBytes, err := json.Marshal(&Extra{
-		BasePrice:         uint256.MustFromBig(basePrice),
-		PriceOracle:       uint256.MustFromBig(priceOracle),
-		Fee:               uint256.MustFromBig(fee),
-		AdminFee:          uint256.MustFromBig(adminFee),
-		AdminFeesX:        uint256.MustFromBig(adminFeesX),
-		AdminFeesY:        uint256.MustFromBig(adminFeesY),
-		ActiveBand:        activeBand.Int64(),
-		MinBand:           minBand.Int64(),
-		MaxBand:           maxBand.Int64(),
-		Bands:             bands,
-		AvailableBalances: availableBalances,
+		BasePrice:           uint256.MustFromBig(basePrice),
+		PriceOracle:         uint256.MustFromBig(priceOracle),
+		Fee:                 uint256.MustFromBig(fee),
+		AdminFee:            uint256.MustFromBig(adminFee),
+		AdminFeesX:          uint256.MustFromBig(adminFeesX),
+		AdminFeesY:          uint256.MustFromBig(adminFeesY),
+		ActiveBand:          activeBand.Int64(),
+		MinBand:             minBand.Int64(),
+		MaxBand:             maxBand.Int64(),
+		Bands:               bands,
+		AvailableBalances:   availableBalances,
+		LastPricesTimestamp: lastPricesTimestamp.Int64(),
 	})
 	if err != nil {
 		lg.WithFields(logger.Fields{

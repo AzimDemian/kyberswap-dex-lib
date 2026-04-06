@@ -30,8 +30,11 @@ type (
 		XcpProfit          *uint256.Int
 		VirtualPrice       *uint256.Int
 		AllowedExtraProfit *uint256.Int
-		AdjustmentStep     *uint256.Int
-		UseCustomMath      bool
+		AdjustmentStep      *uint256.Int
+		UseCustomMath       bool
+		LastPricesTimestamp      int64        `json:"LastPricesTimestamp"`
+		MaTime                  *uint256.Int `json:"MaTime"`
+		OracleSnapshotTimestamp int64        `json:"OracleSnapshotTimestamp,omitempty"`
 	}
 
 	SwapInfo struct {

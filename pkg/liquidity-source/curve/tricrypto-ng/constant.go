@@ -31,7 +31,9 @@ const (
 	poolMethodBalances           = "balances"
 	poolMethodPriceScale         = "price_scale"
 	poolMethodPriceOracle        = "price_oracle"
-	poolMethodLastPrices         = "last_prices"
+	poolMethodLastPrices             = "last_prices"
+	poolMethodLastPricesTimestamp    = "last_prices_timestamp"
+	poolMethodMaTime                = "ma_time"
 
 	MaxLoopLimit = 256
 	NumTokens    = 3

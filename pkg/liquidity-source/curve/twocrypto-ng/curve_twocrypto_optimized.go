@@ -3,7 +3,9 @@ package twocryptong
 import (
 	"time"
 
+	"github.com/KyberNetwork/blockchain-toolkit/i256"
 	"github.com/KyberNetwork/blockchain-toolkit/number"
+	"github.com/KyberNetwork/int256"
 	"github.com/holiman/uint256"
 )
 
@@ -168,6 +170,52 @@ func (t *PoolSimulator) _getDxFee(
 	return nil
 }
 
+// currentPriceOracle computes the EMA-decayed price oracle at the current time.
+// This replicates the on-chain _price_oracle_w() computation.
+func (t *PoolSimulator) currentPriceOracle() []uint256.Int {
+	if t.Extra.MaTime == nil || t.Extra.MaTime.IsZero() || t.Extra.LastPricesTimestamp == 0 {
+		return t.Extra.PriceOracle
+	}
+
+	now := time.Now().Unix()
+
+	// Decay from OracleSnapshotTimestamp (when the VIEW result was fetched),
+	// NOT from LastPricesTimestamp. Extra.PriceOracle is the VIEW function result
+	// which already includes EMA decay from LastPricesTimestamp to fetch time.
+	baseTime := t.Extra.OracleSnapshotTimestamp
+	if baseTime == 0 {
+		baseTime = t.Extra.LastPricesTimestamp
+	}
+
+	if baseTime >= now {
+		return t.Extra.PriceOracle
+	}
+
+	dt := now - baseTime
+	// exponent = -(dt * 1e18) / ma_time
+	dtI256 := new(int256.Int).SetInt64(dt)
+	maTimeI256 := new(int256.Int).SetUint64(t.Extra.MaTime.Uint64())
+	exponent := i256.Neg(i256.Div(i256.Mul(dtI256, I_1e18), maTimeI256))
+
+	alpha, err := wad_exp(exponent)
+	if err != nil {
+		return t.Extra.PriceOracle // fallback
+	}
+
+	oneMinusAlpha := new(uint256.Int).Sub(U_1e18, alpha)
+	result := make([]uint256.Int, len(t.Extra.PriceOracle))
+	for i := range result {
+		// oracle[i] = (last_prices[i] * (1e18 - alpha) + stored_oracle[i] * alpha) / 1e18
+		// Single division to match on-chain Vyper: unsafe_div(lp * (1e18-a) + po * a, 1e18)
+		numerator := new(uint256.Int).Add(
+			number.SafeMul(&t.Extra.LastPrices[i], oneMinusAlpha),
+			number.SafeMul(&t.Extra.PriceOracle[i], alpha),
+		)
+		result[i].Div(numerator, U_1e18)
+	}
+	return result
+}
+
 // https://github.com/curvefi/twocrypto-ng/blob/c4093cbda18ec8f3da21bf7e40a3f8d01c5c4bd3/contracts/main/CurveTwocryptoOptimized.vy#L964
 func (t *PoolSimulator) tweak_price(A, gamma *uint256.Int, _xp [NumTokens]uint256.Int, new_D, K0_prev *uint256.Int,
 	lastPrices, priceScale []uint256.Int, xcp_profit, d, virtualPrice *uint256.Int) error {
@@ -196,6 +244,8 @@ func (t *PoolSimulator) tweak_price(A, gamma *uint256.Int, _xp [NumTokens]uint25
 		// so we can use that here without updating. we only check that we tweak only once
 		return nil
 	}
+
+	currentOracle := t.currentPriceOracle()
 
 	// #                  price_oracle is used further on to calculate its vector
 	// #            distance from price_scale. This distance is used to calculate
@@ -259,7 +309,7 @@ func (t *PoolSimulator) tweak_price(A, gamma *uint256.Int, _xp [NumTokens]uint25
 
 		// #                Calculate the vector distance between price_scale and
 		// #                                                        price_oracle.
-		norm := number.Div(number.SafeMul(&t.Extra.PriceOracle[0], U_1e18), &t.Extra.PriceScale[0])
+		norm := number.Div(number.SafeMul(&currentOracle[0], U_1e18), &t.Extra.PriceScale[0])
 		if norm.Cmp(U_1e18) > 0 {
 			norm = number.SafeSub(norm, U_1e18)
 		} else {
@@ -285,7 +335,7 @@ func (t *PoolSimulator) tweak_price(A, gamma *uint256.Int, _xp [NumTokens]uint25
 				p_new[k].Div(
 					number.SafeAdd(
 						number.SafeMul(&t.Extra.PriceScale[k], number.Sub(norm, adjustment_step)),
-						number.SafeMul(adjustment_step, &t.Extra.PriceOracle[k]),
+						number.SafeMul(adjustment_step, &currentOracle[k]),
 					), norm)
 			}
 

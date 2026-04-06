@@ -6,8 +6,9 @@ import (
 
 type (
 	StaticExtra struct {
-		A             *uint256.Int `json:"A"`
-		UseDynamicFee bool         `json:"useDynamicFee"`
+		A                  *uint256.Int `json:"A"`
+		UseDynamicFee      bool         `json:"useDynamicFee"`
+		OracleContractAddr string       `json:"oracleContractAddr,omitempty"`
 	}
 
 	Extra struct {
@@ -23,6 +24,9 @@ type (
 		Bands       []Band       `json:"bands"`
 
 		AvailableBalances []*uint256.Int `json:"availableBalances"`
+
+		LastPricesTimestamp int64        `json:"lastPricesTimestamp,omitempty"`
+		OracleTime         *uint256.Int `json:"oracleTime,omitempty"`
 	}
 
 	Meta struct {
