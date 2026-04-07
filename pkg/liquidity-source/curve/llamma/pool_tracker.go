@@ -115,11 +115,6 @@ func (t *PoolTracker) GetNewPoolState(
 		Method: llammaMethodMaxBand,
 	}, []any{&maxBand})
 	calls.AddCall(&ethrpc.Call{
-		ABI:    CurveLlammaABI,
-		Target: p.Address,
-		Method: llammaMethodLastPricesTimestamp,
-	}, []any{&lastPricesTimestamp})
-	calls.AddCall(&ethrpc.Call{
 		ABI:    shared.ERC20ABI,
 		Target: p.Tokens[0].Address,
 		Method: shared.ERC20MethodBalanceOf,
@@ -132,6 +127,17 @@ func (t *PoolTracker) GetNewPoolState(
 		Params: []any{common.HexToAddress(p.Address)},
 	}, []any{&balances[1]})
 	resp, err := calls.Aggregate()
+
+	// Fetch last_prices_timestamp separately — older LLAMMA contracts may not have it.
+	lptCalls := t.ethrpcClient.NewRequest().SetContext(ctx)
+	lptCalls.AddCall(&ethrpc.Call{
+		ABI:    CurveLlammaABI,
+		Target: p.Address,
+		Method: llammaMethodLastPricesTimestamp,
+	}, []any{&lastPricesTimestamp})
+	if _, lptErr := lptCalls.TryBlockAndAggregate(); lptErr != nil {
+		lastPricesTimestamp = nil
+	}
 	if err != nil {
 		return p, err
 	}
@@ -154,7 +160,7 @@ func (t *PoolTracker) GetNewPoolState(
 		MaxBand:             maxBand.Int64(),
 		Bands:               bands,
 		AvailableBalances:   availableBalances,
-		LastPricesTimestamp: lastPricesTimestamp.Int64(),
+		LastPricesTimestamp: func() int64 { if lastPricesTimestamp != nil { return lastPricesTimestamp.Int64() }; return 0 }(),
 	})
 	if err != nil {
 		lg.WithFields(logger.Fields{
