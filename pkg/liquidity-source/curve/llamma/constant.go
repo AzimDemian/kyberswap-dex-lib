@@ -29,7 +29,6 @@ const (
 	llammaMethodBandsX               = "bands_x"
 	llammaMethodBandsY               = "bands_y"
 	llammaMethodPriceOracleContract  = "price_oracle_contract"
-	llammaMethodLastPricesTimestamp  = "last_prices_timestamp"
 
 	maxTicksUnit int64 = 50
 	maxTicks     int64 = 50

@@ -30,7 +30,7 @@ const (
 	poolMethodPriceScale         = "price_scale"
 	poolMethodPriceOracle        = "price_oracle"
 	poolMethodLastPrices             = "last_prices"
-	poolMethodLastPricesTimestamp        = "last_prices_timestamp"
+	poolMethodLastTimestamp              = "last_timestamp"
 	poolMethodMaTime                    = "ma_time"
 	poolMethodPackedRebalancingParams   = "packed_rebalancing_params"
 	poolMethodMath                      = "MATH"

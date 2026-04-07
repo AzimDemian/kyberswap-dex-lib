@@ -192,7 +192,7 @@ func (t *PoolTracker) getNewPoolState(
 	calls.AddCall(&ethrpc.Call{
 		ABI:    curveTwocryptoNGABI,
 		Target: p.Address,
-		Method: poolMethodLastPricesTimestamp,
+		Method: poolMethodLastTimestamp,
 		Params: nil,
 	}, []any{&lastPricesTimestamp})
 
@@ -260,7 +260,9 @@ func (t *PoolTracker) getNewPoolState(
 		AdjustmentStep:      number.SetFromBig(adjustmentStep),
 		UseCustomMath:       UseCustomMath(math),
 		LastPricesTimestamp:      lastPricesTimestamp.Int64(),
-		// Extract raw ma_time from packed_rebalancing_params (lowest 64 bits).
+		// Both tricrypto and twocrypto deployed contracts use the raw ma_time from
+		// packed_rebalancing_params in their price_oracle VIEW, not the getter
+		// (which applies * 694 / 1000). Verified via debug_traceCall.
 		MaTime:                  number.SetFromBig(new(big.Int).And(packedRebalancingParams, new(big.Int).SetUint64(^uint64(0)))),
 		OracleSnapshotTimestamp: time.Now().Unix(),
 	}

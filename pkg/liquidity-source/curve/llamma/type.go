@@ -24,9 +24,6 @@ type (
 		Bands       []Band       `json:"bands"`
 
 		AvailableBalances []*uint256.Int `json:"availableBalances"`
-
-		LastPricesTimestamp int64        `json:"lastPricesTimestamp,omitempty"`
-		OracleTime         *uint256.Int `json:"oracleTime,omitempty"`
 	}
 
 	Meta struct {
