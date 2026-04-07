@@ -24,23 +24,27 @@ import (
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/eth"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/metrics"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/ticklens"
+	graphqlpkg "github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/graphql"
 )
 
-var _ = pooltrack.RegisterFactoryCE(DexTypeUniswapV3, NewTracker)
-var _ = pooltrack.RegisterTicksBasedFactoryCE(DexTypeUniswapV3, NewTracker)
+var _ = pooltrack.RegisterFactoryCEG(DexTypeUniswapV3, NewTracker)
+var _ = pooltrack.RegisterTicksBasedFactoryCEG(DexTypeUniswapV3, NewTracker)
 
 type Tracker struct {
-	config       *Config
-	ethrpcClient *ethrpc.Client
+	config        *Config
+	ethrpcClient  *ethrpc.Client
+	graphqlClient *graphqlpkg.Client
 }
 
 func NewTracker(
 	config *Config,
 	ethrpcClient *ethrpc.Client,
+	graphqlClient *graphqlpkg.Client,
 ) (*Tracker, error) {
 	return &Tracker{
-		config:       config,
-		ethrpcClient: ethrpcClient,
+		config:        config,
+		ethrpcClient:  ethrpcClient,
+		graphqlClient: graphqlClient,
 	}, nil
 }
 
@@ -606,10 +610,19 @@ func (t *Tracker) GetNewPoolState(ctx context.Context, p entity.Pool, _ poolpkg.
 	g.Go(func(context.Context) error {
 		var err error
 		poolTicks, err = ticklens.GetPoolTicksFromSC(ctx, t.ethrpcClient, t.config.TickLensAddress, p, nil)
+		if err == nil {
+			return nil
+		}
+
+		if t.config.AlwaysUseTickLens {
+			l.WithFields(logger.Fields{"error": err}).Error("failed to call SC for pool ticks")
+			return err
+		}
+
+		l.WithFields(logger.Fields{"error": err}).Warn("TickLens failed, falling back to subgraph for pool ticks")
+		poolTicks, err = t.getPoolTicks(ctx, p.Address)
 		if err != nil {
-			l.WithFields(logger.Fields{
-				"error": err,
-			}).Error("failed to call SC for pool ticks")
+			l.WithFields(logger.Fields{"error": err}).Error("subgraph fallback for pool ticks also failed")
 		}
 		return err
 	})
@@ -659,6 +672,38 @@ func (t *Tracker) GetNewPoolState(ctx context.Context, p entity.Pool, _ poolpkg.
 	l.Infof("Finish updating state of pool")
 
 	return p, nil
+}
+
+func (t *Tracker) getPoolTicks(ctx context.Context, poolAddress string) ([]TickResp, error) {
+	allowSubgraphError := t.config.IsAllowSubgraphError()
+	lastTickIdx := ""
+	var ticks []TickResp
+
+	for {
+		req := graphqlpkg.NewRequest(getPoolTicksQuery(allowSubgraphError, poolAddress, lastTickIdx))
+
+		var resp struct {
+			Ticks []TickResp `json:"ticks"`
+		}
+
+		if err := t.graphqlClient.Run(ctx, req, &resp); err != nil {
+			if allowSubgraphError && len(resp.Ticks) > 0 {
+				ticks = append(ticks, resp.Ticks...)
+				return ticks, nil
+			}
+			return nil, err
+		}
+
+		if len(resp.Ticks) == 0 {
+			break
+		}
+		ticks = append(ticks, resp.Ticks...)
+		if len(resp.Ticks) < graphFirstLimit {
+			break
+		}
+		lastTickIdx = resp.Ticks[len(resp.Ticks)-1].TickIdx
+	}
+	return ticks, nil
 }
 
 func (t *Tracker) FetchRPCData(ctx context.Context, p *entity.Pool, blockNumber uint64) (*FetchRPCResult, error) {

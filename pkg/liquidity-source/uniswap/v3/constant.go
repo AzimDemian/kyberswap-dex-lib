@@ -11,6 +11,7 @@ import (
 const (
 	DexTypeUniswapV3 = "uniswapv3"
 
+	graphFirstLimit      = 1000
 	defaultTokenDecimals = 18
 	rpcChunkSize         = 100
 	rpcPoolBatchSize     = 1000

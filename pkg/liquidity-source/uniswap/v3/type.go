@@ -25,7 +25,17 @@ type SwapInfo struct {
 }
 
 type Metadata struct {
-	LastProcessedRPCIndex int `json:"lastProcessedRPCIndex"`
+	LastCreatedAtTimestamp *big.Int `json:"lastCreatedAtTimestamp"`
+	LastProcessedRPCIndex  int      `json:"lastProcessedRPCIndex"`
+}
+
+type SubgraphPool struct {
+	ID                 string `json:"id"`
+	FeeTier            string `json:"feeTier"`
+	PoolType           string `json:"poolType"`
+	CreatedAtTimestamp string `json:"createdAtTimestamp"`
+	Token0             Token  `json:"token0"`
+	Token1             Token  `json:"token1"`
 }
 
 type Token struct {

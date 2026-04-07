@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/KyberNetwork/ethrpc"
+	"github.com/KyberNetwork/logger"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/goccy/go-json"
 
@@ -23,53 +24,68 @@ type poolRPCData struct {
 }
 
 // getPoolsFromRPC fetches pool metadata for the next batch from config.StaticPoolList using direct RPC calls.
-func (d *PoolsListUpdater) getPoolsFromRPC(ctx context.Context, fromIndex, maxPools int) ([]entity.Pool, int, error) {
+// Returns successfully built pools, addresses of pools that failed metadata fetch (for subgraph fallback),
+// and the next index to process.
+func (d *PoolsListUpdater) getPoolsFromRPC(ctx context.Context, fromIndex, maxPools int) ([]entity.Pool, []string, int, error) {
 	poolAddresses := d.config.StaticPoolList
 	if fromIndex >= len(poolAddresses) {
-		return nil, fromIndex, nil
+		return nil, nil, fromIndex, nil
 	}
 
-	end := fromIndex + maxPools
-	if end > len(poolAddresses) {
-		end = len(poolAddresses)
-	}
+	end := min(fromIndex+maxPools, len(poolAddresses))
 	batch := poolAddresses[fromIndex:end]
 
 	poolData, err := d.fetchPoolData(ctx, batch)
 	if err != nil {
-		return nil, fromIndex, err
+		return nil, nil, fromIndex, err
 	}
 
-	// Collect unique token addresses
+	zeroAddr := common.Address{}
+	valid := make([]bool, len(batch))
+	var failedAddresses []string
 	tokenSet := make(map[common.Address]struct{})
-	for _, pd := range poolData {
-		if pd.token0 != nil {
-			tokenSet[*pd.token0] = struct{}{}
+
+	for i, pd := range poolData {
+		// token0/token1 are preallocated pointers (new(common.Address)), so nil check is
+		// insufficient — compare the dereferenced value to detect zero-address failures.
+		if pd.token0 == nil || *pd.token0 == zeroAddr ||
+			pd.token1 == nil || *pd.token1 == zeroAddr ||
+			pd.fee == nil || pd.tickSpacing == nil {
+			logger.WithFields(logger.Fields{
+				"dexId": d.config.DexID,
+				"pool":  batch[i],
+			}).Warn("[getPoolsFromRPC] pool has zero/nil metadata, will attempt subgraph fallback")
+			failedAddresses = append(failedAddresses, strings.ToLower(batch[i]))
+			continue
 		}
-		if pd.token1 != nil {
-			tokenSet[*pd.token1] = struct{}{}
-		}
+		valid[i] = true
+		tokenSet[*pd.token0] = struct{}{}
+		tokenSet[*pd.token1] = struct{}{}
 	}
+
 	uniqueTokens := make([]common.Address, 0, len(tokenSet))
 	for addr := range tokenSet {
 		uniqueTokens = append(uniqueTokens, addr)
 	}
 
-	decimalsMap, err := d.fetchTokenDecimals(ctx, uniqueTokens)
-	if err != nil {
-		return nil, fromIndex, err
-	}
+	decimalsMap := d.fetchTokenDecimals(ctx, uniqueTokens)
 
 	pools := make([]entity.Pool, 0, len(batch))
 	for i, addr := range batch {
-		pd := poolData[i]
-		if pd.token0 == nil || pd.token1 == nil || pd.fee == nil || pd.tickSpacing == nil {
+		if !valid[i] {
 			continue
 		}
-		pools = append(pools, buildPoolFromRPCData(addr, pd, decimalsMap, d.config))
+		pools = append(pools, buildPoolFromRPCData(addr, poolData[i], decimalsMap, d.config))
 	}
 
-	return pools, end, nil
+	logger.WithFields(logger.Fields{
+		"dexId":  d.config.DexID,
+		"total":  len(batch),
+		"built":  len(pools),
+		"failed": len(failedAddresses),
+	}).Info("[getPoolsFromRPC] batch complete")
+
+	return pools, failedAddresses, end, nil
 }
 
 // fetchPoolData batch-calls token0/token1/fee/tickSpacing on each pool contract.
@@ -115,31 +131,64 @@ func (d *PoolsListUpdater) fetchPoolData(ctx context.Context, addresses []string
 	return result, nil
 }
 
-// fetchTokenDecimals batch-fetches ERC20 decimals for the given token addresses.
-func (d *PoolsListUpdater) fetchTokenDecimals(ctx context.Context, addresses []common.Address) (map[common.Address]uint8, error) {
+// fetchTokenDecimals batch-fetches ERC20 decimals for the given token addresses, chunked
+// by rpcChunkSize. If any chunk fails, those tokens fall back to defaultTokenDecimals (18)
+// and are logged. Never returns an error — partial failures are absorbed gracefully.
+func (d *PoolsListUpdater) fetchTokenDecimals(ctx context.Context, addresses []common.Address) map[common.Address]uint8 {
 	result := make(map[common.Address]uint8, len(addresses))
 	if len(addresses) == 0 {
-		return result, nil
+		return result
 	}
 
-	decimals := make([]uint8, len(addresses))
-	req := d.ethrpcClient.NewRequest().SetContext(ctx)
-	for i, addr := range addresses {
-		req.AddCall(&ethrpc.Call{
-			ABI:    utilabi.Erc20ABI,
-			Target: addr.Hex(),
-			Method: utilabi.Erc20DecimalsMethod,
-		}, []any{&decimals[i]})
+	totalFallback := 0
+
+	for i := 0; i < len(addresses); i += rpcChunkSize {
+		end := min(i+rpcChunkSize, len(addresses))
+		chunk := addresses[i:end]
+
+		decimals := make([]uint8, len(chunk))
+		req := d.ethrpcClient.NewRequest().SetContext(ctx)
+		for j, addr := range chunk {
+			req.AddCall(&ethrpc.Call{
+				ABI:    utilabi.Erc20ABI,
+				Target: addr.Hex(),
+				Method: utilabi.Erc20DecimalsMethod,
+			}, []any{&decimals[j]})
+		}
+
+		if _, err := req.TryAggregate(); err != nil {
+			// Log per-token addresses so operators can investigate
+			addrs := make([]string, len(chunk))
+			for k, a := range chunk {
+				addrs[k] = a.Hex()
+			}
+			logger.WithFields(logger.Fields{
+				"dexId":  d.config.DexID,
+				"tokens": addrs,
+				"error":  err,
+			}).Warn("[fetchTokenDecimals] chunk failed, using defaultTokenDecimals for affected tokens")
+
+			for _, addr := range chunk {
+				result[addr] = defaultTokenDecimals
+			}
+			totalFallback += len(chunk)
+			continue
+		}
+
+		for j, addr := range chunk {
+			result[addr] = decimals[j]
+		}
 	}
 
-	if _, err := req.TryAggregate(); err != nil {
-		return nil, err
+	if totalFallback > 0 {
+		logger.WithFields(logger.Fields{
+			"dexId":    d.config.DexID,
+			"fallback": totalFallback,
+			"total":    len(addresses),
+		}).Warn("[fetchTokenDecimals] some tokens fell back to defaultTokenDecimals")
 	}
 
-	for i, addr := range addresses {
-		result[addr] = decimals[i]
-	}
-	return result, nil
+	return result
 }
 
 // buildPoolFromRPCData constructs an entity.Pool from direct RPC pool data.
