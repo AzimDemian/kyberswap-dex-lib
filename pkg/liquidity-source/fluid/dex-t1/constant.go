@@ -10,6 +10,8 @@ import (
 const (
 	DexType = "fluid-dex-t1"
 
+	defaultStaticPoolBatchSize = 22
+
 	// DexReservesResolver methods
 
 	DRRMethodGetAllPoolsReservesAdjusted = "getAllPoolsReservesAdjusted"

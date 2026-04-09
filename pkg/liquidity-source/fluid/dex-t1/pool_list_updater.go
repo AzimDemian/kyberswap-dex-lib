@@ -20,10 +20,6 @@ type PoolsListUpdater struct {
 	ethrpcClient *ethrpc.Client
 }
 
-type Metadata struct {
-	LastSyncPoolsLength int `json:"lastSyncPoolsLength"`
-}
-
 var _ = poollist.RegisterFactoryCE(DexType, NewPoolsListUpdater)
 
 func NewPoolsListUpdater(config *Config, ethrpcClient *ethrpc.Client) *PoolsListUpdater {
@@ -43,18 +39,6 @@ func (u *PoolsListUpdater) GetNewPools(ctx context.Context, metadataBytes []byte
 		}).Infof("Finish updating pools list.")
 	}()
 
-	allPools, err := u.getAllPools(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	newMetadataBytes, err := json.Marshal(Metadata{
-		LastSyncPoolsLength: len(allPools),
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-
 	var metadata Metadata
 	if len(metadataBytes) > 0 {
 		if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
@@ -62,77 +46,53 @@ func (u *PoolsListUpdater) GetNewPools(ctx context.Context, metadataBytes []byte
 		}
 	}
 
+	// Phase 1: fetch pools from the pre-configured static list via individual RPC calls.
+	var staticPools []entity.Pool
+	nextStaticIndex := metadata.LastProcessedStaticIndex
+	if len(u.config.StaticPoolList) > 0 {
+		batchSize := u.config.StaticPoolBatchSize
+		if batchSize <= 0 {
+			batchSize = defaultStaticPoolBatchSize
+		}
+		var err error
+		staticPools, nextStaticIndex, err = u.getPoolsFromStaticList(ctx, metadata.LastProcessedStaticIndex, batchSize)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	// Phase 2: bulk-fetch all pools from the resolver and process only newly-seen ones.
+	allPools, err := u.getAllPools(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	newLastSyncLength := len(allPools)
 	if metadata.LastSyncPoolsLength > 0 {
-		// only handle new pools after last synced index
 		allPools = allPools[metadata.LastSyncPoolsLength:]
 	}
 
-	pools := make([]entity.Pool, 0)
-
+	dynamicPools := make([]entity.Pool, 0, len(allPools))
 	for _, curPool := range allPools {
 		token0Decimals, token1Decimals, err := u.readTokensDecimals(ctx, curPool.Token0Address, curPool.Token1Address)
 		if err != nil {
 			return nil, nil, err
 		}
-
-		staticExtraBytes, err := json.Marshal(&StaticExtra{
-			DexReservesResolver: u.config.DexReservesResolver,
-			HasNative: strings.EqualFold(curPool.Token0Address.Hex(), valueobject.NativeAddress) ||
-				strings.EqualFold(curPool.Token1Address.Hex(), valueobject.NativeAddress),
-		})
+		pool, err := buildPool(curPool, token0Decimals, token1Decimals, u.config.ChainID, u.config.DexReservesResolver)
 		if err != nil {
 			return nil, nil, err
 		}
+		dynamicPools = append(dynamicPools, pool)
+	}
 
-		extra := PoolExtra{
-			CollateralReserves: curPool.CollateralReserves,
-			DebtReserves:       curPool.DebtReserves,
-			DexLimits:          curPool.Limits,
-			CenterPrice:        curPool.CenterPrice,
-		}
+	pools := deduplicatePools(staticPools, dynamicPools)
 
-		extraBytes, err := json.Marshal(extra)
-		if err != nil {
-			logger.WithFields(logger.Fields{"dexType": DexType, "error": err}).Error("Error marshaling extra data")
-			return nil, nil, err
-		}
-
-		pool := entity.Pool{
-			Address:  hexutil.Encode(curPool.PoolAddress[:]),
-			Exchange: valueobject.ExchangeFluidDexT1,
-			Type:     DexType,
-			Reserves: entity.PoolReserves{
-				getMaxReserves(
-					token0Decimals,
-					curPool.Limits.WithdrawableToken0,
-					curPool.Limits.BorrowableToken0,
-					curPool.CollateralReserves.Token0RealReserves,
-					curPool.DebtReserves.Token0RealReserves).String(),
-				getMaxReserves(
-					token1Decimals,
-					curPool.Limits.WithdrawableToken1,
-					curPool.Limits.BorrowableToken1,
-					curPool.CollateralReserves.Token1RealReserves,
-					curPool.DebtReserves.Token1RealReserves).String(),
-			},
-			Tokens: []*entity.PoolToken{
-				{
-					Address:   valueobject.WrapNativeLower(curPool.Token0Address.Hex(), u.config.ChainID),
-					Swappable: true,
-					Decimals:  token0Decimals,
-				},
-				{
-					Address:   valueobject.WrapNativeLower(curPool.Token1Address.Hex(), u.config.ChainID),
-					Swappable: true,
-					Decimals:  token1Decimals,
-				},
-			},
-			SwapFee:     float64(curPool.Fee.Int64()) / FeePercentPrecision,
-			Extra:       string(extraBytes),
-			StaticExtra: string(staticExtraBytes),
-		}
-
-		pools = append(pools, pool)
+	newMetadataBytes, err := json.Marshal(Metadata{
+		LastSyncPoolsLength:      newLastSyncLength,
+		LastProcessedStaticIndex: nextStaticIndex,
+	})
+	if err != nil {
+		return nil, nil, err
 	}
 
 	return pools, newMetadataBytes, nil
@@ -197,4 +157,82 @@ func (u *PoolsListUpdater) readTokensDecimals(ctx context.Context, token0 common
 	}
 
 	return decimals0, decimals1, nil
+}
+
+// buildPool constructs an entity.Pool from a PoolWithReserves and token decimals.
+// Used by both the static-list phase and the bulk-resolver phase.
+func buildPool(curPool PoolWithReserves, token0Decimals, token1Decimals uint8, chainID valueobject.ChainID, dexReservesResolver string) (entity.Pool, error) {
+	staticExtraBytes, err := json.Marshal(&StaticExtra{
+		DexReservesResolver: dexReservesResolver,
+		HasNative: strings.EqualFold(curPool.Token0Address.Hex(), valueobject.NativeAddress) ||
+			strings.EqualFold(curPool.Token1Address.Hex(), valueobject.NativeAddress),
+	})
+	if err != nil {
+		return entity.Pool{}, err
+	}
+
+	extra := PoolExtra{
+		CollateralReserves: curPool.CollateralReserves,
+		DebtReserves:       curPool.DebtReserves,
+		DexLimits:          curPool.Limits,
+		CenterPrice:        curPool.CenterPrice,
+	}
+
+	extraBytes, err := json.Marshal(extra)
+	if err != nil {
+		logger.WithFields(logger.Fields{"dexType": DexType, "error": err}).Error("Error marshaling extra data")
+		return entity.Pool{}, err
+	}
+
+	pool := entity.Pool{
+		Address:  hexutil.Encode(curPool.PoolAddress[:]),
+		Exchange: valueobject.ExchangeFluidDexT1,
+		Type:     DexType,
+		Reserves: entity.PoolReserves{
+			getMaxReserves(
+				token0Decimals,
+				curPool.Limits.WithdrawableToken0,
+				curPool.Limits.BorrowableToken0,
+				curPool.CollateralReserves.Token0RealReserves,
+				curPool.DebtReserves.Token0RealReserves).String(),
+			getMaxReserves(
+				token1Decimals,
+				curPool.Limits.WithdrawableToken1,
+				curPool.Limits.BorrowableToken1,
+				curPool.CollateralReserves.Token1RealReserves,
+				curPool.DebtReserves.Token1RealReserves).String(),
+		},
+		Tokens: []*entity.PoolToken{
+			{
+				Address:   valueobject.WrapNativeLower(curPool.Token0Address.Hex(), chainID),
+				Swappable: true,
+				Decimals:  token0Decimals,
+			},
+			{
+				Address:   valueobject.WrapNativeLower(curPool.Token1Address.Hex(), chainID),
+				Swappable: true,
+				Decimals:  token1Decimals,
+			},
+		},
+		SwapFee:     float64(curPool.Fee.Int64()) / FeePercentPrecision,
+		Extra:       string(extraBytes),
+		StaticExtra: string(staticExtraBytes),
+	}
+
+	return pool, nil
+}
+
+// deduplicatePools merges two pool slices, keeping the first occurrence of each address.
+// primary pools take priority over secondary.
+func deduplicatePools(primary, secondary []entity.Pool) []entity.Pool {
+	seen := make(map[string]struct{}, len(primary)+len(secondary))
+	result := make([]entity.Pool, 0, len(primary)+len(secondary))
+	for _, p := range append(primary, secondary...) {
+		key := strings.ToLower(p.Address)
+		if _, ok := seen[key]; !ok {
+			seen[key] = struct{}{}
+			result = append(result, p)
+		}
+	}
+	return result
 }

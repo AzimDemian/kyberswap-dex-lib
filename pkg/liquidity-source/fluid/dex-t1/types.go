@@ -6,6 +6,11 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
+type Metadata struct {
+	LastSyncPoolsLength      int `json:"lastSyncPoolsLength"`
+	LastProcessedStaticIndex int `json:"lastProcessedStaticIndex"`
+}
+
 type PoolMeta struct {
 	BlockNumber     uint64 `json:"blockNumber"`
 	ApprovalAddress string `json:"approvalAddress,omitempty"`
