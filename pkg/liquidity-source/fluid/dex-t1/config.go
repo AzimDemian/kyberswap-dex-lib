@@ -6,4 +6,6 @@ type Config struct {
 	DexID               string              `json:"dexID"`
 	ChainID             valueobject.ChainID `json:"chainID"`
 	DexReservesResolver string              `json:"dexReservesResolver"`
+	AllowRPCFetch       bool                `json:"allowRPCFetch"`
+	StaticPoolList      []string            `json:"staticPoolList"`
 }
