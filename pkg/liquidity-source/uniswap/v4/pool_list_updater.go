@@ -26,12 +26,8 @@ type (
 	}
 
 	Metadata struct {
-		// Subgraph mode fields (unchanged for backward compatibility)
 		LastCreatedAtTimestamp int    `json:"lastCreatedAtTimestamp"`
 		LastProcessedPoolId    string `json:"lastProcessedPoolID"`
-
-		// RPC mode: index into the pools list (list_of_pools.json)
-		LastProcessedRPCIndex int `json:"lastProcessedRPCIndex"`
 	}
 )
 
@@ -52,68 +48,35 @@ func NewPoolListUpdater(
 func (u *PoolsListUpdater) GetNewPools(ctx context.Context, metadataBytes []byte) ([]entity.Pool, []byte, error) {
 	var metadata Metadata
 	if len(metadataBytes) != 0 {
-		if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-			return nil, metadataBytes, err
-		}
-	}
-
-	var subgraphPools, rpcPools []entity.Pool
-
-	if u.config.EnableSubgraphUpdater {
-		var err error
-		subgraphPools, err = u.getPoolsFromSubgraph(ctx, &metadata)
+		err := json.Unmarshal(metadataBytes, &metadata)
 		if err != nil {
 			return nil, metadataBytes, err
 		}
 	}
 
-	if u.config.EnableRPCUpdater {
-		var (
-			nextIndex int
-			err       error
-		)
-		rpcPools, nextIndex, err = u.getPoolsFromRPC(ctx, metadata.LastProcessedRPCIndex, u.config.NewPoolLimit)
-		if err != nil {
-			return nil, metadataBytes, err
-		}
-		metadata.LastProcessedRPCIndex = nextIndex
-	}
-
-	pools := deduplicatePools(subgraphPools, rpcPools)
-
-	newMetadataBytes, err := json.Marshal(metadata)
+	subgraphPools, err := u.getPoolsList(ctx, metadata.LastCreatedAtTimestamp, u.config.NewPoolLimit)
 	if err != nil {
 		return nil, metadataBytes, err
 	}
 
-	logger.WithFields(logger.Fields{
-		"dexId":         u.config.DexID,
-		"pools":         len(pools),
-		"subgraphPools": len(subgraphPools),
-		"rpcPools":      len(rpcPools),
-	}).Info("finished getting new pools")
+	// Currently disable filter which will lead to dup process getnewpools, but it's oke
+	// If we enable, we have to change logic of for loop in pool-service where "len(poolsList) < newPoolLimit"
 
-	return pools, newMetadataBytes, nil
-}
-
-// getPoolsFromSubgraph fetches new pools from the subgraph and updates the relevant metadata fields.
-func (u *PoolsListUpdater) getPoolsFromSubgraph(ctx context.Context, metadata *Metadata) ([]entity.Pool, error) {
-	subgraphPools, err := u.getPoolsList(ctx, metadata.LastCreatedAtTimestamp, u.config.NewPoolLimit)
-	if err != nil {
-		return nil, err
-	}
+	// subgraphPools = lo.Filter(subgraphPools, func(p SubgraphPool, _ int) bool {
+	//	return p.ID != metadata.LastProcessedPoolId
+	// })
 
 	pools := make([]entity.Pool, 0, len(subgraphPools))
-	chainID := valueobject.ChainID(u.config.ChainID)
 
+	chainID := valueobject.ChainID(u.config.ChainID)
 	for _, p := range subgraphPools {
 		token0Decimals, err := kutils.Atou[uint8](p.Token0.Decimals)
 		if err != nil {
-			return nil, err
+			return nil, metadataBytes, err
 		}
 		token1Decimals, err := kutils.Atou[uint8](p.Token1.Decimals)
 		if err != nil {
-			return nil, err
+			return nil, metadataBytes, err
 		}
 		tokens := []*entity.PoolToken{
 			{Address: p.Token0.ID, Decimals: token0Decimals, Swappable: true},
@@ -127,11 +90,11 @@ func (u *PoolsListUpdater) getPoolsFromSubgraph(ctx context.Context, metadata *M
 
 		tickSpacing, err := kutils.Atoi[int32](p.TickSpacing)
 		if err != nil {
-			return nil, err
+			return nil, metadataBytes, err
 		}
 		fee, err := kutils.Atou[uint32](p.Fee)
 		if err != nil {
-			return nil, err
+			return nil, metadataBytes, err
 		}
 
 		staticExtra := StaticExtra{
@@ -146,7 +109,7 @@ func (u *PoolsListUpdater) getPoolsFromSubgraph(ctx context.Context, metadata *M
 
 		staticExtraBytes, err := json.Marshal(staticExtra)
 		if err != nil {
-			return nil, err
+			return nil, metadataBytes, err
 		}
 
 		hook, _ := GetHook(staticExtra.HooksAddress, &HookParam{Cfg: u.config})
@@ -164,20 +127,31 @@ func (u *PoolsListUpdater) getPoolsFromSubgraph(ctx context.Context, metadata *M
 		pools = append(pools, pool)
 	}
 
-	// Update subgraph-mode metadata
+	// Update metadata
 	if len(subgraphPools) > 0 {
 		lastCreatedAtTimestamp, err := strconv.Atoi(subgraphPools[len(subgraphPools)-1].CreatedAtTimestamp)
 		if err != nil {
-			return nil, err
+			return nil, metadataBytes, err
 		}
+
 		metadata.LastCreatedAtTimestamp = lastCreatedAtTimestamp
 		metadata.LastProcessedPoolId = subgraphPools[len(subgraphPools)-1].ID
+		metadataBytes, err = json.Marshal(metadata)
+		if err != nil {
+			return nil, metadataBytes, err
+		}
 	}
 
-	return pools, nil
+	logger.WithFields(logger.Fields{
+		"dexId": u.config.DexID,
+		"pools": len(pools),
+	}).Info("finished getting new pools")
+
+	return pools, metadataBytes, nil
 }
 
-func (u *PoolsListUpdater) getPoolsList(ctx context.Context, lastCreatedAtTimestamp int, first int) ([]SubgraphPool, error) {
+func (u *PoolsListUpdater) getPoolsList(ctx context.Context, lastCreatedAtTimestamp int, first int) ([]SubgraphPool,
+	error) {
 	req := graphqlpkg.NewRequest(getPoolsListQuery(lastCreatedAtTimestamp, first))
 
 	var response struct {
@@ -193,21 +167,4 @@ func (u *PoolsListUpdater) getPoolsList(ctx context.Context, lastCreatedAtTimest
 	}
 
 	return response.Pools, nil
-}
-
-// deduplicatePools merges pool slices, keeping the first occurrence of each pool address.
-// Subgraph pools take precedence over RPC pools when both sources return the same pool.
-func deduplicatePools(sources ...[]entity.Pool) []entity.Pool {
-	seen := make(map[string]struct{})
-	var result []entity.Pool
-	for _, pools := range sources {
-		for _, p := range pools {
-			addr := strings.ToLower(p.Address)
-			if _, exists := seen[addr]; !exists {
-				seen[addr] = struct{}{}
-				result = append(result, p)
-			}
-		}
-	}
-	return result
 }
