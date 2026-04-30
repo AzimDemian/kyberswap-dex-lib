@@ -38,3 +38,15 @@ func Vault(_ valueobject.ChainID, exchange string) common.Address {
 	}
 	return vault
 }
+
+// AppendBufferReserves appends a zero-reserve entry for each non-empty buffer token.
+// Buffer tokens (ERC4626 wrappers) are appended to the pool's token list with zero
+// reserves because their effective liquidity is accounted through the underlying tokens.
+func AppendBufferReserves(reserves []string, bufferTokens []string) []string {
+	for _, buf := range bufferTokens {
+		if buf != "" {
+			reserves = append(reserves, "0")
+		}
+	}
+	return reserves
+}

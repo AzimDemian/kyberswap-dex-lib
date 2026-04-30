@@ -30,7 +30,7 @@ func NewPoolSimulator(params pool.FactoryParams) (*base.PoolSimulator, error) {
 		return nil, err
 	}
 
-	return base.NewPoolSimulator(params, extra.Extra, staticExtra.StaticExtra, &PoolSimulator{
+	return base.NewPoolSimulator(params, extra.Extra, &staticExtra.StaticExtra, &PoolSimulator{
 		weights:           extra.Weights,
 		multipliers:       extra.Multipliers,
 		lastUpdateTime:    extra.LastUpdateTime,

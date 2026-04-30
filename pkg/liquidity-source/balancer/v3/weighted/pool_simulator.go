@@ -65,7 +65,7 @@ func (p *PoolSimulator) OnSwap(param shared.PoolSwapParams) (amountOutScaled18 *
 }
 
 func (p *PoolSimulator) getNormalizedWeight(tokenIndex int) (*uint256.Int, error) {
-	if tokenIndex > len(p.normalizedWeights) {
+	if tokenIndex >= len(p.normalizedWeights) {
 		return nil, ErrInvalidToken
 	}
 

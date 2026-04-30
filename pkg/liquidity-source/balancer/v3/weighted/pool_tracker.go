@@ -105,10 +105,12 @@ func (t *PoolTracker) getNewPoolState(
 	p.Timestamp = time.Now().Unix()
 
 	if res.IsPoolDisabled || !shared.IsHookSupported(staticExtra.HookType) {
-		// set all reserves to 0 to disable pool
 		p.Reserves = lo.Map(p.Reserves, func(_ string, _ int) string { return "0" })
 	} else {
-		p.Reserves = lo.Map(res.PoolData.BalancesRaw, func(v *big.Int, _ int) string { return v.String() })
+		p.Reserves = shared.AppendBufferReserves(
+			lo.Map(res.PoolData.BalancesRaw, func(v *big.Int, _ int) string { return v.String() }),
+			staticExtra.BufferTokens,
+		)
 	}
 
 	return p, nil
@@ -121,6 +123,7 @@ func (t *PoolTracker) queryRPCData(ctx context.Context, p *entity.Pool, staticEx
 		isVaultPaused        bool
 		isPoolPaused         bool
 		isPoolInRecoveryMode bool
+		isPoolInitialized    bool
 	)
 
 	req := t.ethrpcClient.R().SetContext(ctx).SetOverrides(overrides).SetFrom(shared.AddrDummy)
@@ -162,6 +165,11 @@ func (t *PoolTracker) queryRPCData(ctx context.Context, p *entity.Pool, staticEx
 		Method: shared.VaultMethodIsPoolInRecoveryMode,
 		Params: paramsPool,
 	}, []any{&isPoolInRecoveryMode}).AddCall(&ethrpc.Call{
+		ABI:    shared.VaultExplorerABI,
+		Target: t.config.VaultExplorer,
+		Method: shared.VaultMethodIsPoolInitialized,
+		Params: paramsPool,
+	}, []any{&isPoolInitialized}).AddCall(&ethrpc.Call{
 		ABI:    poolABI,
 		Target: poolAddress,
 		Method: poolMethodGetNormalizedWeights,
@@ -173,7 +181,7 @@ func (t *PoolTracker) queryRPCData(ctx context.Context, p *entity.Pool, staticEx
 		return nil, errors.WithMessage(err, "failed to query RPC data")
 	}
 
-	rpcRes.IsPoolDisabled = isVaultPaused || isPoolPaused || isPoolInRecoveryMode
+	rpcRes.IsPoolDisabled = isVaultPaused || isPoolPaused || isPoolInRecoveryMode || !isPoolInitialized
 	rpcRes.BlockNumber = res.BlockNumber.Uint64()
 
 	return &rpcRes, nil

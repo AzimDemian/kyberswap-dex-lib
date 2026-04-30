@@ -7,10 +7,17 @@ import (
 	"github.com/holiman/uint256"
 )
 
+type BufferPair struct {
+	Underlying string `json:"underlying"`
+	Wrapped    string `json:"wrapped"`
+}
+
 type StaticExtra struct {
-	Hook         string   `json:"hook,omitempty"`
-	HookType     HookType `json:"hookT,omitempty"`
-	BufferTokens []string `json:"buffs,omitempty"`
+	Hook             string       `json:"hook,omitempty"`
+	HookType         HookType     `json:"hookT,omitempty"`
+	BufferTokens     []string     `json:"buffs,omitempty"`
+	RegisteredTokens []string     `json:"registeredTokens,omitempty"`
+	Buffers          []BufferPair `json:"buffers,omitempty"`
 }
 
 type Extra struct {
