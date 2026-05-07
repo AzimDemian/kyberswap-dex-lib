@@ -23,4 +23,9 @@ type Config struct {
 	// Required for RPC-based discovery so the correct hook type can be stored
 	// in StaticExtra without hitting an additional RPC round-trip per pool.
 	HookTypes map[string]HookType `json:"hookTypes,omitempty"`
+	// AllowSubgraphFetch controls subgraph use in pool discovery.
+	// When false (default): factory RPC only; RPC errors are returned to caller.
+	// When true with FactoryAddress set: RPC primary, subgraph fallback on error.
+	// When true with FactoryAddress empty: subgraph only (legacy mode).
+	AllowSubgraphFetch bool `json:"allowSubgraphFetch,omitempty"`
 }

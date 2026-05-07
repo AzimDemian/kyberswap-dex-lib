@@ -47,15 +47,21 @@ func NewPoolsListUpdater(config *Config, ethrpcClient *ethrpc.Client,
 
 func (u *PoolsListUpdater) GetNewPools(ctx context.Context, metadataBytes []byte) ([]entity.Pool, []byte, error) {
 	if u.config.FactoryAddress == "" {
+		if !u.config.AllowSubgraphFetch {
+			return nil, metadataBytes, nil
+		}
 		return u.getNewPoolsSubgraph(ctx, metadataBytes)
 	}
 	pools, meta, err := u.getNewPoolsRPC(ctx, metadataBytes)
-	if err != nil {
+	if err == nil {
+		return pools, meta, nil
+	}
+	if u.config.AllowSubgraphFetch {
 		klog.WithFields(ctx, klog.Fields{"dexID": u.config.DexID}).
 			Warnf("RPC pool discovery failed, falling back to subgraph: %v", err)
 		return u.getNewPoolsSubgraph(ctx, metadataBytes)
 	}
-	return pools, meta, nil
+	return nil, nil, err
 }
 
 // ── Subgraph mode ─────────────────────────────────────────────────────────────
