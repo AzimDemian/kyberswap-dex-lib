@@ -166,73 +166,78 @@ func (d *PoolsListUpdater) GetNewPools(ctx context.Context, metadataBytes []byte
 
 		sgTimestampPools, err := d.getPoolsList(ctx, metadata.LastCreatedAtTimestamp, graphFirstLimit, 0)
 		if err != nil {
-			return nil, metadataBytes, err
-		}
-
-		// Advance cursor based on timestamp-ordered results only
-		if len(sgTimestampPools) > 0 {
-			last := sgTimestampPools[len(sgTimestampPools)-1]
-			if ts, ok := new(big.Int).SetString(last.CreatedAtTimestamp, 10); ok {
-				metadata.LastCreatedAtTimestamp = ts
-			} else {
-				logger.WithFields(logger.Fields{
-					"dexId": d.config.DexID,
-					"pool":  last.ID,
-					"ts":    last.CreatedAtTimestamp,
-				}).Warn("[GetNewPools] could not parse last pool timestamp, cursor not advanced")
-			}
-		}
-
-		// 2b: Subgraph fallback for pools that failed RPC metadata fetch
-		allSgPools := sgTimestampPools
-		if len(rpcFailedAddresses) > 0 {
+			// Non-fatal: RPC pools collected in Phase 1 are preserved; subgraph phase is skipped.
 			logger.WithFields(logger.Fields{
-				"dexId": d.config.DexID,
-				"count": len(rpcFailedAddresses),
-			}).Info("[GetNewPools] attempting subgraph fallback for RPC-failed pools")
+				"dexId":    d.config.DexID,
+				"rpcPools": len(rpcPools),
+				"error":    err,
+			}).Warn("[GetNewPools] subgraph phase failed, continuing with RPC pools only")
+		} else {
+			// Advance cursor based on timestamp-ordered results only
+			if len(sgTimestampPools) > 0 {
+				last := sgTimestampPools[len(sgTimestampPools)-1]
+				if ts, ok := new(big.Int).SetString(last.CreatedAtTimestamp, 10); ok {
+					metadata.LastCreatedAtTimestamp = ts
+				} else {
+					logger.WithFields(logger.Fields{
+						"dexId": d.config.DexID,
+						"pool":  last.ID,
+						"ts":    last.CreatedAtTimestamp,
+					}).Warn("[GetNewPools] could not parse last pool timestamp, cursor not advanced")
+				}
+			}
 
-			fallbackPools, fallbackErr := d.getPoolsByAddresses(ctx, rpcFailedAddresses)
-			if fallbackErr != nil {
-				// Non-fatal: log and continue without fallback pools
+			// 2b: Subgraph fallback for pools that failed RPC metadata fetch
+			allSgPools := sgTimestampPools
+			if len(rpcFailedAddresses) > 0 {
 				logger.WithFields(logger.Fields{
 					"dexId": d.config.DexID,
-					"error": fallbackErr,
-				}).Warn("[GetNewPools] subgraph fallback failed, skipping affected pools")
-			} else {
-				logger.WithFields(logger.Fields{
-					"dexId":     d.config.DexID,
-					"attempted": len(rpcFailedAddresses),
-					"recovered": len(fallbackPools),
-				}).Info("[GetNewPools] subgraph fallback complete")
-				allSgPools = append(allSgPools, fallbackPools...)
+					"count": len(rpcFailedAddresses),
+				}).Info("[GetNewPools] attempting subgraph fallback for RPC-failed pools")
+
+				fallbackPools, fallbackErr := d.getPoolsByAddresses(ctx, rpcFailedAddresses)
+				if fallbackErr != nil {
+					// Non-fatal: log and continue without fallback pools
+					logger.WithFields(logger.Fields{
+						"dexId": d.config.DexID,
+						"error": fallbackErr,
+					}).Warn("[GetNewPools] subgraph fallback failed, skipping affected pools")
+				} else {
+					logger.WithFields(logger.Fields{
+						"dexId":     d.config.DexID,
+						"attempted": len(rpcFailedAddresses),
+						"recovered": len(fallbackPools),
+					}).Info("[GetNewPools] subgraph fallback complete")
+					allSgPools = append(allSgPools, fallbackPools...)
+				}
 			}
-		}
 
-		// Fetch tickSpacings for all subgraph pools in one batched RPC call
-		tickSpacings, _ := FetchTickSpacings(
-			ctx,
-			lo.Map(allSgPools, func(p SubgraphPool, _ int) string { return p.ID }),
-			d.ethrpcClient,
-			abis.UniswapV3PoolABI,
-			methodTickSpacing,
-		)
+			// Fetch tickSpacings for all subgraph pools in one batched RPC call
+			tickSpacings, _ := FetchTickSpacings(
+				ctx,
+				lo.Map(allSgPools, func(p SubgraphPool, _ int) string { return p.ID }),
+				d.ethrpcClient,
+				abis.UniswapV3PoolABI,
+				methodTickSpacing,
+			)
 
-		for _, p := range allSgPools {
-			if p.Token0.Address == "" || p.Token1.Address == "" {
-				logger.WithFields(logger.Fields{
-					"dexId": d.config.DexID,
-					"pool":  p.ID,
-				}).Warn("[GetNewPools] skipping subgraph pool with empty token address")
-				continue
+			for _, p := range allSgPools {
+				if p.Token0.Address == "" || p.Token1.Address == "" {
+					logger.WithFields(logger.Fields{
+						"dexId": d.config.DexID,
+						"pool":  p.ID,
+					}).Warn("[GetNewPools] skipping subgraph pool with empty token address")
+					continue
+				}
+				subgraphPools = append(subgraphPools, d.buildPoolFromSubgraphData(p, tickSpacings))
 			}
-			subgraphPools = append(subgraphPools, d.buildPoolFromSubgraphData(p, tickSpacings))
-		}
 
-		logger.WithFields(logger.Fields{
-			"dexId":         d.config.DexID,
-			"timestampPool": len(sgTimestampPools),
-			"subgraphPools": len(subgraphPools),
-		}).Info("[GetNewPools] subgraph phase complete")
+			logger.WithFields(logger.Fields{
+				"dexId":         d.config.DexID,
+				"timestampPool": len(sgTimestampPools),
+				"subgraphPools": len(subgraphPools),
+			}).Info("[GetNewPools] subgraph phase complete")
+		}
 	}
 
 	// Merge: RPC pools take priority; deduplicatePools keeps first occurrence per address.
