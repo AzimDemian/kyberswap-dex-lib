@@ -3,6 +3,7 @@ package base
 import (
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/KyberNetwork/logger"
 	"github.com/holiman/uint256"
@@ -467,4 +468,31 @@ func (p *PoolSimulator) CanSwapTo(address string) []string {
 
 func (p *PoolSimulator) CanSwapFrom(address string) []string {
 	return p.CanSwapTo(address)
+}
+
+// ConvertUnderlyingToShares converts an amount of underlying asset to the
+// equivalent ERC4626 wrapper shares using the prefetched rate table stored in
+// the simulator. bufferAddr is the wrapper token address (e.g. stataUSDC).
+// Returns nil when the wrapper is not registered, has no buffer data, or the
+// rate lookup fails — callers must treat nil as a failed conversion.
+func (p *PoolSimulator) ConvertUnderlyingToShares(bufferAddr string, underlyingAmt *big.Int) *big.Int {
+	target := strings.ToLower(bufferAddr)
+	for i, bt := range p.bufferTokens {
+		if strings.ToLower(bt) != target {
+			continue
+		}
+		if i >= len(p.buffers) || p.buffers[i] == nil {
+			return nil
+		}
+		amount, overflow := uint256.FromBig(underlyingAmt)
+		if overflow {
+			return nil
+		}
+		shares, err := p.buffers[i].ConvertToShares(amount, false)
+		if err != nil {
+			return nil
+		}
+		return shares.ToBig()
+	}
+	return nil
 }
