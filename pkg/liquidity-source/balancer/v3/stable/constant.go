@@ -1,6 +1,8 @@
 package stable
 
 import (
+	"errors"
+
 	"github.com/holiman/uint256"
 
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/valueobject"
@@ -17,9 +19,15 @@ const (
 	stableSurgeHookMethodGetSurgeThresholdPercentage = "getSurgeThresholdPercentage"
 
 	baseGas = 237494
+
+	maxImbalanceRatio = uint64(10_000)
 )
 
 var (
+	// ErrMaxImbalanceRatioExceeded mirrors StablePool.MaxImbalanceRatioExceeded()
+	// (selector 0x8a3b7ff1). Returned when the post-swap min/max balance ratio
+	// would reach or exceed 10 000, matching the on-chain check in onSwap.
+	ErrMaxImbalanceRatioExceeded = errors.New("MaxImbalanceRatioExceeded")
 	// AcceptableMaxSurgeFeePercentage caps max acceptable surge fee to avoid high slippage
 	AcceptableMaxSurgeFeePercentage = uint256.NewInt(0.1e18) // 10%
 	// AcceptableMaxSurgeFeeByImbalance caps max acceptable surge fee per imbalance to avoid high slippage
