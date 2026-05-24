@@ -82,22 +82,31 @@ func (d *PoolTracker) GetNewPoolState(
 		return err
 	})
 	g.Go(func(context.Context) error {
+		// TickLens-first: discover ticks from the on-chain TickLens, falling back to the subgraph
+		// only if it fails (and AlwaysUseTickLens isn't enforced). This keeps initial tick discovery
+		// working on any chain regardless of subgraph state, including RPC-discovered pools.
 		var err error
+		poolTicks, err = d.getPoolTicksFromSC(ctx, p, param)
+		if err == nil {
+			return nil
+		}
+
 		if d.config.AlwaysUseTickLens {
-			poolTicks, err = d.getPoolTicksFromSC(ctx, p, param)
-			if err != nil {
-				l.WithFields(logger.Fields{
-					"error": err,
-				}).Error("failed to call SC for pool ticks")
-			}
+			l.WithFields(logger.Fields{
+				"error": err,
+			}).Error("failed to call SC for pool ticks")
 			return err
 		}
+
+		l.WithFields(logger.Fields{
+			"error": err,
+		}).Warn("TickLens failed, falling back to subgraph for pool ticks")
 
 		poolTicks, err = d.getPoolTicks(ctx, p.Address)
 		if err != nil {
 			l.WithFields(logger.Fields{
 				"error": err,
-			}).Error("failed to query subgraph for pool ticks")
+			}).Error("subgraph fallback for pool ticks also failed")
 		}
 
 		return err
