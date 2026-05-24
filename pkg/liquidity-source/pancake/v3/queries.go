@@ -2,7 +2,9 @@ package pancakev3
 
 import (
 	"bytes"
+	"fmt"
 	"math/big"
+	"strings"
 	"text/template"
 )
 
@@ -72,6 +74,38 @@ func getPoolsListQuery(allowSubgraphError bool, lastCreatedAtTimestamp *big.Int,
 	}
 
 	return tpl.String()
+}
+
+// getPoolsByAddressesQuery builds a GraphQL query that fetches specific pools by address
+// using the standard id_in filter. Used for subgraph fallback when RPC metadata fetch
+// fails for individual pools.
+func getPoolsByAddressesQuery(addresses []string) string {
+	quoted := make([]string, len(addresses))
+	for i, a := range addresses {
+		quoted[i] = fmt.Sprintf("%q", strings.ToLower(a))
+	}
+	return fmt.Sprintf(`{
+		pools(where: { id_in: [%s] }, first: %d) {
+			id
+			liquidity
+			sqrtPrice
+			createdAtTimestamp
+			tick
+			feeTier
+			token0 {
+				id
+				name
+				symbol
+				decimals
+			}
+			token1 {
+				id
+				name
+				symbol
+				decimals
+			}
+		}
+	}`, strings.Join(quoted, ", "), len(addresses))
 }
 
 func getPoolTicksQuery(allowSubgraphError bool, poolAddress string, lastTickIdx string) string {
