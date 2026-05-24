@@ -10,6 +10,10 @@ const (
 	graphFirstLimit      = 1000
 	defaultTokenDecimals = 18
 	tickChunkSize        = 100
+	// fetchTicksAmount caps how many active ticks a single getNextActiveTicks call returns.
+	// The on-chain TickLens walks the linked list itself, so one call covers any pool with
+	// fewer than this many initialized ticks; only denser pools need an extra request.
+	fetchTicksAmount = 1000
 
 	maxSwapLoop = 1000000
 
@@ -21,6 +25,8 @@ const (
 	poolTickSpacingMethod = "tickSpacing"
 	poolPluginMethod      = "plugin"
 	poolTicksMethod       = "ticks"
+
+	tickLensGetNextActiveTicksMethod = "getNextActiveTicks"
 
 	votalityOraclePluginTimepointsMethod             = "timepoints"
 	votalityOraclePluginTimepointIndexMethod         = "timepointIndex"
