@@ -518,6 +518,7 @@ const (
 	ExchangeWildcat                    = "wildcat"
 	ExchangeInfinifi                   = "infinifi-gateway"
 	ExchangeTessera                    = "tessera"
+	ExchangeBaseline                   = "baseline"
 )
 
 var RFQSourceSet = map[Exchange]struct{}{
