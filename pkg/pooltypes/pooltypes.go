@@ -77,6 +77,7 @@ import (
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/liquidcore"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/litepsm"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/lo1inch"
+	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/baseline"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/maker/savingsdai"
 	skypsm "github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/maker/sky-psm"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/mantle/meth"
@@ -311,6 +312,7 @@ type Types struct {
 	FluidDexLite               string
 	MantleETH                  string
 	OndoUSDY                   string
+	Baseline                   string
 	Clear                      string
 	Clipper                    string
 	DeltaSwapV1                string
@@ -503,6 +505,7 @@ var (
 		FluidDexLite:               fluidDexLite.DexType,
 		MantleETH:                  meth.DexType,
 		OndoUSDY:                   ondousdy.DexType,
+		Baseline:                   baseline.DexType,
 		Clear:                      clear.DexType,
 		Clipper:                    clipper.DexType,
 		DeltaSwapV1:                deltaswapv1.DexType,

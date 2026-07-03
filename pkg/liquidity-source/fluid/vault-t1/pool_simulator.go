@@ -54,6 +54,18 @@ func (s *PoolSimulator) CalcAmountOut(param pool.CalcAmountOutParams) (*pool.Cal
 		return nil, ErrInvalidAmountIn
 	}
 
+	// Vault T1 liquidation is strictly one-directional: pay debt (Tokens[0]) and
+	// receive collateral (Tokens[1]). Ratio is collateral-per-debt and is
+	// meaningless in reverse, so forbid the other direction outright rather than
+	// returning a bogus quote. This makes get_amount_out fail for it everywhere —
+	// the approximator skips it, and the /amount_out API and downstream solver
+	// never route collateral -> debt.
+	if len(s.Info.Tokens) < 2 ||
+		!strings.EqualFold(param.TokenAmountIn.Token, s.Info.Tokens[0]) ||
+		!strings.EqualFold(param.TokenOut, s.Info.Tokens[1]) {
+		return nil, ErrInvalidSwapDirection
+	}
+
 	tokenAmountOut := new(big.Int).Mul(param.TokenAmountIn.Amount, s.Ratio)
 
 	// ratio is scaled in 1e27, so divide by 1e27
