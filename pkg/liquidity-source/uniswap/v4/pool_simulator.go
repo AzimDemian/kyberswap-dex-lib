@@ -381,6 +381,14 @@ func (p *PoolSimulator) GetExchange() string {
 	return p.hook.GetExchange()
 }
 
+// GetHookData returns the hookData this pool's hook expects to be forwarded on
+// every PoolManager.swap call. Most hooks don't need any (empty bytes), but
+// some (e.g. hooks/cult) require a fixed non-empty payload for the on-chain
+// hook contract to behave as quoted here.
+func (p *PoolSimulator) GetHookData() []byte {
+	return p.hook.GetHookData()
+}
+
 func (p *PoolSimulator) GetTokens() []string {
 	seen := make(map[string]struct{})
 	tokens := make([]string, 0, len(p.Info.Tokens))

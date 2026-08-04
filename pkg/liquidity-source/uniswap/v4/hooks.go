@@ -153,8 +153,21 @@ func GetHook(hookAddress common.Address, param *HookParam) (hook Hook, ok bool) 
 		if param == nil {
 			param = &HookParam{}
 		}
+		if param.Cfg == nil {
+			// Hook factories are also invoked with a bare HookAddress-only param
+			// (e.g. to resolve GetExchange() for pool-list bookkeeping, before any
+			// RPC-backed tracking config exists). Guarantee Cfg is non-nil so
+			// factories that read param.Cfg.* unconditionally don't panic.
+			param.Cfg = &Config{}
+		}
 		param.HookAddress = hookAddress
 		hook = hookFactory(param)
+		if hook == nil {
+			// A registered factory can fail to build a hook (e.g. malformed HookExtra)
+			// and return nil. Fall back to BaseHook rather than handing back a nil
+			// interface, which would panic on the very next method call.
+			hook = &BaseHook{}
+		}
 	}
 	return hook, ok
 }
