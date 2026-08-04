@@ -53,6 +53,19 @@ func NewPoolSimulator(entityPool entity.Pool, chainID valueobject.ChainID) (*Poo
 		allowEmptyTicks = true
 	}
 
+	if shared.IsDynamicFee(staticExtra.Fee) {
+		// staticExtra.Fee/entityPool.SwapFee here is PoolKey.fee as read from
+		// chain, which for a dynamic-fee pool is LPFeeLibrary.DYNAMIC_FEE_FLAG
+		// (0x800000 = 8_388_608), not a real fee -- it's a marker meaning "ask
+		// the hook". The underlying v3 math engine has no concept of that
+		// marker and validates fee < FeeMax (1_000_000), so passing it through
+		// unmodified always fails pool construction with ErrFeeTooHigh. The
+		// real per-swap fee is applied later via hook.BeforeSwap's SwapFee
+		// override in CalcAmountOut/CalcAmountIn, so 0 here is just a valid
+		// placeholder for construction.
+		entityPool.SwapFee = 0
+	}
+
 	v3PoolSimulator, err := uniswapv3.NewPoolSimulatorWithExtra(entityPool, chainID, extra.ExtraTickU256, allowEmptyTicks)
 	if err != nil {
 		return nil, err
