@@ -155,6 +155,12 @@ func GetHook(hookAddress common.Address, param *HookParam) (hook Hook, ok bool) 
 		}
 		param.HookAddress = hookAddress
 		hook = hookFactory(param)
+		if hook == nil {
+			// A registered factory can fail to build a hook (e.g. malformed HookExtra)
+			// and return nil. Fall back to BaseHook rather than handing back a nil
+			// interface, which would panic on the very next method call.
+			hook = &BaseHook{}
+		}
 	}
 	return hook, ok
 }
