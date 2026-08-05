@@ -14,9 +14,14 @@ const (
 
 	graphFirstLimit = 1000
 
-	maxChangedTicks = 10
+	maxChangedTicks = 50
 
 	tickChunkSize = 100
+
+	bitmapWordChunkSize = 500
+
+	minRawTick = -887272
+	maxRawTick = 887272
 )
 
 var (

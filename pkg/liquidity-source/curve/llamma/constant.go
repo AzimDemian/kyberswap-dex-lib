@@ -26,8 +26,9 @@ const (
 	llammaMethodActiveBand   = "active_band"
 	llammaMethodMinBand      = "min_band"
 	llammaMethodMaxBand      = "max_band"
-	llammaMethodBandsX       = "bands_x"
-	llammaMethodBandsY       = "bands_y"
+	llammaMethodBandsX               = "bands_x"
+	llammaMethodBandsY               = "bands_y"
+	llammaMethodPriceOracleContract  = "price_oracle_contract"
 
 	maxTicksUnit int64 = 50
 	maxTicks     int64 = 50

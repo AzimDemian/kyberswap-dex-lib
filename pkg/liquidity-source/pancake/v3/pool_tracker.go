@@ -85,22 +85,24 @@ func (t *PoolTracker) BootstrapPoolState(
 		return err
 	})
 	g.Go(func(context.Context) error {
+		// Mirror uniswap/v3: read ticks from the on-chain TickLens first (works on
+		// any chain regardless of subgraph), and only fall back to the subgraph if
+		// TickLens fails and AlwaysUseTickLens is not enforced.
 		var err error
+		poolTicks, err = ticklens.GetPoolTicksFromSC(ctx, t.ethrpcClient, t.config.TickLensAddress, p, nil)
+		if err == nil {
+			return nil
+		}
+
 		if t.config.AlwaysUseTickLens {
-			poolTicks, err = ticklens.GetPoolTicksFromSC(ctx, t.ethrpcClient, t.config.TickLensAddress, p, nil)
-			if err != nil {
-				logger.WithFields(logger.Fields{
-					"error": err,
-				}).Error("failed to call SC for pool ticks")
-			}
+			l.WithFields(logger.Fields{"error": err}).Error("failed to call SC for pool ticks")
 			return err
 		}
 
+		l.WithFields(logger.Fields{"error": err}).Warn("TickLens failed, falling back to subgraph for pool ticks")
 		poolTicks, err = t.getPoolTicks(ctx, p.Address)
 		if err != nil {
-			l.WithFields(logger.Fields{
-				"error": err,
-			}).Error("failed to query subgraph for pool ticks")
+			l.WithFields(logger.Fields{"error": err}).Error("subgraph fallback for pool ticks also failed")
 		}
 
 		return err

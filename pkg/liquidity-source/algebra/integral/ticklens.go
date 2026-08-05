@@ -9,7 +9,9 @@ import (
 	"github.com/KyberNetwork/ethrpc"
 	"github.com/KyberNetwork/kutils"
 	"github.com/KyberNetwork/logger"
+	v3Utils "github.com/KyberNetwork/uniswapv3-sdk-uint256/utils"
 	mapset "github.com/deckarep/golang-set/v2"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/goccy/go-json"
 
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/entity"
@@ -17,11 +19,19 @@ import (
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/ticklens"
 )
 
+// PopulatedTick mirrors the ITickLens.PopulatedTick struct returned by the Algebra TickLens.
+type PopulatedTick struct {
+	Tick           *big.Int
+	LiquidityNet   *big.Int
+	LiquidityGross *big.Int
+}
+
 func (d *PoolTracker) getPoolTicksFromSC(ctx context.Context, pool entity.Pool, param sourcePool.GetNewPoolStateParams) ([]TickResp, error) {
 	changedTicks := ticklens.GetChangedTicks(param.Logs)
 	if len(changedTicks) == 0 {
-		// Algebra doesn't compact the tick table, so it's not feasible to fetch all for now
-		return nil, ErrNotSupportFetchFullTick
+		// No changed ticks in the logs (e.g. bootstrap / RPC-discovered pool): discover the
+		// full tick set on-chain by walking Algebra's active-tick linked list via the TickLens.
+		return d.getAllTicksFromSC(ctx, pool.Address)
 	}
 
 	logger.Infof("Fetch changed ticks (%v)", changedTicks)
@@ -100,6 +110,81 @@ func (d *PoolTracker) getPoolTicksFromSC(ctx context.Context, pool entity.Pool, 
 			combined = append(combined, tick)
 		}
 		ticks = combined
+	}
+
+	sort.SliceStable(ticks, func(i, j int) bool {
+		iTick, _ := strconv.Atoi(ticks[i].TickIdx)
+		jTick, _ := strconv.Atoi(ticks[j].TickIdx)
+
+		return iTick < jTick
+	})
+
+	return ticks, nil
+}
+
+// getAllTicksFromSC discovers every initialized tick of a pool from the on-chain TickLens.
+//
+// Algebra stores ticks as a doubly-linked list (prevTick/nextTick) rather than a Uniswap-style
+// word bitmap, so instead of scanning the whole tick range word-by-word we let the TickLens walk
+// the list for us. Starting from the always-initialized MIN_TICK sentinel and walking upward,
+// getNextActiveTicks follows nextTick pointers on-chain and returns the entire list in a single
+// eth_call for any pool with fewer than fetchTicksAmount initialized ticks (i.e. virtually all
+// pools), so this needs just one node request in the common case.
+func (d *PoolTracker) getAllTicksFromSC(ctx context.Context, poolAddress string) ([]TickResp, error) {
+	poolAddr := common.HexToAddress(poolAddress)
+	// MIN_TICK is a self-referencing sentinel (prevTick == MIN_TICK), so it's a valid, always
+	// initialized starting point for getNextActiveTicks.
+	startingTick := big.NewInt(int64(v3Utils.MinTick))
+
+	ticksByIdx := make(map[int64]TickResp)
+	for {
+		var populatedTicks []PopulatedTick
+		req := d.EthrpcClient.NewRequest().SetContext(ctx)
+		req.AddCall(&ethrpc.Call{
+			ABI:    ticklensABI,
+			Target: d.config.TickLensAddress,
+			Method: tickLensGetNextActiveTicksMethod,
+			Params: []any{poolAddr, startingTick, big.NewInt(fetchTicksAmount), true},
+		}, []any{&populatedTicks})
+
+		if _, err := req.Call(); err != nil {
+			return nil, err
+		}
+
+		if len(populatedTicks) == 0 {
+			break
+		}
+
+		for _, pt := range populatedTicks {
+			// skip the MIN_TICK/MAX_TICK sentinels and any uninitialized tick
+			if pt.LiquidityGross == nil || pt.LiquidityGross.Sign() <= 0 {
+				continue
+			}
+
+			tickIdx := pt.Tick.Int64()
+			ticksByIdx[tickIdx] = TickResp{
+				TickIdx:        strconv.FormatInt(tickIdx, 10),
+				LiquidityGross: pt.LiquidityGross.String(),
+				LiquidityNet:   pt.LiquidityNet.String(),
+			}
+		}
+
+		// fewer than requested means the upper boundary (MAX_TICK) was reached: all ticks fetched
+		if len(populatedTicks) < fetchTicksAmount {
+			break
+		}
+
+		// otherwise continue from the last tick; it's returned again (inclusive) but deduped by the map
+		lastTick := populatedTicks[len(populatedTicks)-1].Tick
+		if lastTick.Cmp(startingTick) == 0 {
+			break
+		}
+		startingTick = lastTick
+	}
+
+	ticks := make([]TickResp, 0, len(ticksByIdx))
+	for _, t := range ticksByIdx {
+		ticks = append(ticks, t)
 	}
 
 	sort.SliceStable(ticks, func(i, j int) bool {

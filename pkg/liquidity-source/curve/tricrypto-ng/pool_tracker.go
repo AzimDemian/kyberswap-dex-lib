@@ -75,6 +75,8 @@ func (t *PoolTracker) getNewPoolState(
 
 		xcpProfit, virtualPrice, allowedExtraProfit, adjustmentStep, lpSupply *big.Int
 
+		lastPricesTimestamp *big.Int
+
 		balances = make([]*big.Int, len(p.Tokens))
 
 		numDepCoins = len(p.Tokens) - 1 // other coins will have price based on the 1st coin
@@ -140,6 +142,23 @@ func (t *PoolTracker) getNewPoolState(
 		Method: shared.ERC20MethodTotalSupply,
 	}, []any{&lpSupply})
 
+	calls.AddCall(&ethrpc.Call{
+		ABI:    curveTricryptoNGABI,
+		Target: p.Address,
+		Method: poolMethodLastPricesTimestamp,
+		Params: nil,
+	}, []any{&lastPricesTimestamp})
+
+	// Fetch packed_rebalancing_params to get the RAW ma_time.
+	// The ma_time() getter applies * 694 / 1000 for display, but the EMA uses the raw value.
+	var packedRebalancingParams *big.Int
+	calls.AddCall(&ethrpc.Call{
+		ABI:    curveTricryptoNGABI,
+		Target: p.Address,
+		Method: poolMethodPackedRebalancingParams,
+		Params: nil,
+	}, []any{&packedRebalancingParams})
+
 	for i := range p.Tokens {
 		calls.AddCall(&ethrpc.Call{
 			ABI:    curveTricryptoNGABI,
@@ -188,8 +207,13 @@ func (t *PoolTracker) getNewPoolState(
 		LpSupply:           number.SetFromBig(lpSupply),
 		XcpProfit:          number.SetFromBig(xcpProfit),
 		VirtualPrice:       number.SetFromBig(virtualPrice),
-		AllowedExtraProfit: number.SetFromBig(allowedExtraProfit),
-		AdjustmentStep:     number.SetFromBig(adjustmentStep),
+		AllowedExtraProfit:  number.SetFromBig(allowedExtraProfit),
+		AdjustmentStep:      number.SetFromBig(adjustmentStep),
+		LastPricesTimestamp:      lastPricesTimestamp.Int64(),
+		// Extract raw ma_time from packed_rebalancing_params (lowest 64 bits).
+		// The ma_time() getter applies * 694 / 1000 for display; EMA uses the raw value.
+		MaTime:                  number.SetFromBig(new(big.Int).And(packedRebalancingParams, new(big.Int).SetUint64(^uint64(0)))),
+		OracleSnapshotTimestamp: time.Now().Unix(),
 	}
 	extra.PriceScale = make([]uint256.Int, len(priceScales))
 	lo.ForEach(priceScales, func(item *big.Int, i int) { extra.PriceScale[i].SetFromBig(item) })

@@ -79,10 +79,11 @@ func (u *PoolsListUpdater) GetNewPools(ctx context.Context, metadataBytes []byte
 
 func (u *PoolsListUpdater) getPools(ctx context.Context, offset int, batchSize int) ([]entity.Pool, error) {
 	var (
-		amms          = make([]common.Address, batchSize)
-		collaterals   = make([]common.Address, batchSize)
-		aCoefficients = make([]*big.Int, batchSize)
-		decimals      = make([]uint8, batchSize+1)
+		amms              = make([]common.Address, batchSize)
+		collaterals       = make([]common.Address, batchSize)
+		aCoefficients     = make([]*big.Int, batchSize)
+		oracleContracts   = make([]common.Address, batchSize)
+		decimals          = make([]uint8, batchSize+1)
 	)
 
 	factoryCalls := u.ethrpcClient.NewRequest().SetContext(ctx)
@@ -111,6 +112,10 @@ func (u *PoolsListUpdater) getPools(ctx context.Context, offset int, batchSize i
 			Target: amms[i].String(),
 			Method: LlammaMethodA,
 		}, []any{&aCoefficients[i]}).AddCall(&ethrpc.Call{
+			ABI:    CurveLlammaABI,
+			Target: amms[i].String(),
+			Method: llammaMethodPriceOracleContract,
+		}, []any{&oracleContracts[i]}).AddCall(&ethrpc.Call{
 			ABI:    shared.ERC20ABI,
 			Target: collaterals[i].String(),
 			Method: shared.ERC20MethodDecimals,
@@ -128,8 +133,9 @@ func (u *PoolsListUpdater) getPools(ctx context.Context, offset int, batchSize i
 	pools := make([]entity.Pool, 0, len(amms))
 	for i, amm := range amms {
 		staticExtraBytes, err := json.Marshal(StaticExtra{
-			A:             uint256.MustFromBig(aCoefficients[i]),
-			UseDynamicFee: (offset + i) > 5, // Workaround for old pools
+			A:                  uint256.MustFromBig(aCoefficients[i]),
+			UseDynamicFee:      (offset + i) > 5, // Workaround for old pools
+			OracleContractAddr: strings.ToLower(oracleContracts[i].Hex()),
 		})
 		if err != nil {
 			u.logger.Errorf("failed to marshal static extra data")

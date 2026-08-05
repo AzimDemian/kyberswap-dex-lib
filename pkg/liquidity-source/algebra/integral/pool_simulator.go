@@ -282,7 +282,7 @@ func (p *PoolSimulator) writeTimepoint(onWrite func() error) (err error) {
 }
 
 func (p *PoolSimulator) beforeSwapV1(zeroForOne bool) (uint32, uint32, error) {
-	if p.globalState.PluginConfig&BEFORE_SWAP_FLAG == 0 || p.dynamicFee == nil {
+	if p.globalState.PluginConfig&BEFORE_SWAP_FLAG == 0 || p.dynamicFee == nil || !p.dynamicFee.isConfigured() {
 		return 0, 0, nil
 	}
 	return 0, 0, p.writeTimepoint(func() error {
@@ -304,6 +304,15 @@ func (p *PoolSimulator) beforeSwapV1(zeroForOne bool) (uint32, uint32, error) {
 		}
 		return nil
 	})
+}
+
+// isConfigured reports whether the plugin has any dynamic-fee parameters set at all.
+// When every field is zero (alpha1=alpha2=baseFee=0 and no directional fee), the plugin
+// isn't managing this pool's fee: per Algebra's beforeSwap convention a 0 override means
+// "don't touch the fee", so the pool's existing globalState fee must be left as-is rather
+// than being zeroed out on every simulated swap.
+func (c *DynamicFeeConfig) isConfigured() bool {
+	return c.ZeroToOne != 0 || c.OneToZero != 0 || c.Alpha1 != 0 || c.Alpha2 != 0 || c.BaseFee != 0
 }
 
 func (p *PoolSimulator) beforeSwapV2(zeroToOne bool) (uint32, uint32, error) {

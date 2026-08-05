@@ -14,6 +14,7 @@ const (
 	graphFirstLimit      = 1000
 	defaultTokenDecimals = 18
 	rpcChunkSize         = 100
+	rpcPoolBatchSize     = 1000
 	tickChunkSize        = 100
 )
 
@@ -22,6 +23,9 @@ const (
 	methodGetSlot0     = "slot0"
 	methodTickSpacing  = "tickSpacing"
 	methodTicks        = "ticks"
+	methodToken0       = "token0"
+	methodToken1       = "token1"
+	methodFee          = "fee"
 )
 
 var (

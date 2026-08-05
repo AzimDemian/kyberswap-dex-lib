@@ -10,7 +10,7 @@ import (
 )
 
 type StaticExtra struct {
-	*shared.StaticExtra
+	shared.StaticExtra
 	MaxTradeSizeRatio *uint256.Int `json:"mxTSR,omitempty"`
 }
 

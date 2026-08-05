@@ -126,10 +126,12 @@ func (t *PoolTracker) getNewPoolState(
 	p.Timestamp = time.Now().Unix()
 
 	if res.IsPoolDisabled || !shared.IsHookSupported(staticExtra.HookType) {
-		// set all reserves to 0 to disable pool
 		p.Reserves = lo.Map(p.Reserves, func(_ string, _ int) string { return "0" })
 	} else {
-		p.Reserves = lo.Map(res.PoolData.BalancesRaw, func(v *big.Int, _ int) string { return v.String() })
+		p.Reserves = shared.AppendBufferReserves(
+			lo.Map(res.PoolData.BalancesRaw, func(v *big.Int, _ int) string { return v.String() }),
+			staticExtra.BufferTokens,
+		)
 	}
 
 	return p, nil
@@ -138,8 +140,10 @@ func (t *PoolTracker) getNewPoolState(
 func (t *PoolTracker) queryRPCData(ctx context.Context, p *entity.Pool, staticExtra StaticExtra,
 	overrides map[common.Address]gethclient.OverrideAccount) (*RpcResult, error) {
 	var (
-		rpcRes        RpcResult
-		isVaultPaused bool
+		rpcRes               RpcResult
+		isVaultPaused        bool
+		isPoolPaused         bool
+		isPoolInRecoveryMode bool
 	)
 
 	req := t.ethrpcClient.R().SetContext(ctx).SetOverrides(overrides).SetFrom(shared.AddrDummy)
@@ -171,6 +175,16 @@ func (t *PoolTracker) queryRPCData(ctx context.Context, p *entity.Pool, staticEx
 		Target: t.config.VaultExplorer,
 		Method: shared.VaultMethodIsVaultPaused,
 	}, []any{&isVaultPaused}).AddCall(&ethrpc.Call{
+		ABI:    shared.VaultExplorerABI,
+		Target: t.config.VaultExplorer,
+		Method: shared.VaultMethodIsPoolPaused,
+		Params: paramsPool,
+	}, []any{&isPoolPaused}).AddCall(&ethrpc.Call{
+		ABI:    shared.VaultExplorerABI,
+		Target: t.config.VaultExplorer,
+		Method: shared.VaultMethodIsPoolInRecoveryMode,
+		Params: paramsPool,
+	}, []any{&isPoolInRecoveryMode}).AddCall(&ethrpc.Call{
 		ABI:    poolABI,
 		Target: poolAddress,
 		Method: poolMethodGetQuantAMMWeightedPoolDynamicData,
@@ -189,8 +203,8 @@ func (t *PoolTracker) queryRPCData(ctx context.Context, p *entity.Pool, staticEx
 		return nil, errors.WithMessage(err, "failed to query RPC data")
 	}
 
-	rpcRes.IsPoolDisabled = isVaultPaused || !rpcRes.DynamicData.IsPoolInitialized || rpcRes.DynamicData.IsPoolPaused ||
-		rpcRes.DynamicData.IsPoolInRecoveryMode
+	rpcRes.IsPoolDisabled = isVaultPaused || isPoolPaused || isPoolInRecoveryMode ||
+		!rpcRes.DynamicData.IsPoolInitialized
 	rpcRes.BlockNumber = res.BlockNumber.Uint64()
 
 	return &rpcRes, nil

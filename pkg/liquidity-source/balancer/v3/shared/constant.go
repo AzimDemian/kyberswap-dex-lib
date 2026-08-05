@@ -54,10 +54,15 @@ const (
 	VaultMethodGetStaticSwapFeePercentage = "getStaticSwapFeePercentage"
 	VaultMethodGetAggregateFeePercentages = "getAggregateFeePercentages"
 	VaultMethodGetPoolData                = "getPoolData"
+	VaultMethodGetPoolTokens              = "getPoolTokens"
 
 	VaultMethodIsVaultPaused        = "isVaultPaused"
 	VaultMethodIsPoolPaused         = "isPoolPaused"
 	VaultMethodIsPoolInRecoveryMode = "isPoolInRecoveryMode"
+	VaultMethodIsPoolInitialized    = "isPoolInitialized"
+
+	FactoryMethodGetPoolCount = "getPoolCount"
+	FactoryMethodGetPools     = "getPoolsInRange"
 
 	ERC4626MethodConvertToAssets = "convertToAssets"
 	ERC4626MethodConvertToShares = "convertToShares"

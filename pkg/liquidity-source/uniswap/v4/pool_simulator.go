@@ -48,6 +48,19 @@ func NewPoolSimulator(entityPool entity.Pool, chainID valueobject.ChainID) (*Poo
 
 	allowEmptyTicks := hook.AllowEmptyTicks()
 
+	if shared.IsDynamicFee(staticExtra.Fee) {
+		// staticExtra.Fee/entityPool.SwapFee here is PoolKey.fee as read from
+		// chain, which for a dynamic-fee pool is LPFeeLibrary.DYNAMIC_FEE_FLAG
+		// (0x800000 = 8_388_608), not a real fee -- it's a marker meaning "ask
+		// the hook". The underlying v3 math engine has no concept of that
+		// marker and validates fee < FeeMax (1_000_000), so passing it through
+		// unmodified always fails pool construction with ErrFeeTooHigh. The
+		// real per-swap fee is applied later via hook.BeforeSwap's SwapFee
+		// override in CalcAmountOut/CalcAmountIn, so 0 here is just a valid
+		// placeholder for construction.
+		entityPool.SwapFee = 0
+	}
+
 	v3PoolSimulator, err := uniswapv3.NewPoolSimulatorWithExtra(entityPool, extra.ExtraTickU256,
 		uniswapv3.SimulatorConfig{AllowEmptyTicks: allowEmptyTicks})
 	if err != nil {
@@ -370,6 +383,14 @@ func (p *PoolSimulator) CanSwapTo(address string) []string {
 
 func (p *PoolSimulator) GetExchange() string {
 	return p.hook.GetExchange()
+}
+
+// GetHookData returns the hookData this pool's hook expects to be forwarded on
+// every PoolManager.swap call. Most hooks don't need any (empty bytes), but
+// some (e.g. hooks/cult) require a fixed non-empty payload for the on-chain
+// hook contract to behave as quoted here.
+func (p *PoolSimulator) GetHookData() []byte {
+	return p.hook.GetHookData()
 }
 
 func (p *PoolSimulator) GetTokens() []string {

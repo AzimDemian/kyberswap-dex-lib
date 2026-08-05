@@ -55,7 +55,7 @@ func (p *PoolSimulator) OnSwap(param shared.PoolSwapParams) (*uint256.Int, error
 		return nil, err
 	}
 
-	return lo.Ternary(param.Kind == shared.ExactIn,
+	result, err := lo.Ternary(param.Kind == shared.ExactIn,
 		math.StableMath.ComputeOutGivenExactIn, math.StableMath.ComputeInGivenExactOut,
 	)(
 		p.currentAmp,
@@ -65,6 +65,64 @@ func (p *PoolSimulator) OnSwap(param shared.PoolSwapParams) (*uint256.Int, error
 		param.AmountGivenScaled18,
 		invariant,
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Mirror on-chain StablePool.ensureBalancesWithinMaxImbalanceRange.
+	// For ExactIn:  amountIn is the fee-deducted given amount, amountOut is the result.
+	// For ExactOut: amountIn is the result (pre-fee), amountOut is the given amount.
+	var amountIn, amountOut *uint256.Int
+	if param.Kind == shared.ExactIn {
+		amountIn, amountOut = param.AmountGivenScaled18, result
+	} else {
+		amountIn, amountOut = result, param.AmountGivenScaled18
+	}
+	if err := checkPostSwapImbalance(param.BalancesScaled18, param.IndexIn, param.IndexOut, amountIn, amountOut); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// checkPostSwapImbalance replicates Balancer v3 StablePool's
+// ensureBalancesWithinMaxImbalanceRange using scaled-18 balances.
+// Reverts with ErrMaxImbalanceRatioExceeded when max/min >= 10 000.
+func checkPostSwapImbalance(balances []*uint256.Int, indexIn, indexOut int, amountIn, amountOut *uint256.Int) error {
+	var minBal, maxBal uint256.Int
+	first := true
+
+	for i, bal := range balances {
+		b := new(uint256.Int).Set(bal)
+		switch i {
+		case indexIn:
+			b.Add(b, amountIn)
+		case indexOut:
+			if b.Lt(amountOut) {
+				return ErrMaxImbalanceRatioExceeded
+			}
+			b.Sub(b, amountOut)
+		}
+		if first || b.Lt(&minBal) {
+			minBal.Set(b)
+		}
+		if first || b.Gt(&maxBal) {
+			maxBal.Set(b)
+		}
+		first = false
+	}
+
+	if minBal.IsZero() {
+		return ErrMaxImbalanceRatioExceeded
+	}
+
+	var ratio uint256.Int
+	ratio.Div(&maxBal, &minBal)
+	if ratio.GtUint64(maxImbalanceRatio - 1) {
+		return ErrMaxImbalanceRatioExceeded
+	}
+
+	return nil
 }
 
 func (p *PoolSimulator) computeInvariant(balancesLiveScaled18 []*uint256.Int, rounding shared.Rounding) (*uint256.Int,

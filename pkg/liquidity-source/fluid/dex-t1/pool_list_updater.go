@@ -67,12 +67,21 @@ func (u *PoolsListUpdater) GetNewPools(ctx context.Context, metadataBytes []byte
 		allPools = allPools[metadata.LastSyncPoolsLength:]
 	}
 
-	pools := make([]entity.Pool, 0)
+	decimalsMap := u.readAllTokensDecimals(ctx, allPools)
+
+	pools := make([]entity.Pool, 0, len(allPools))
 
 	for _, curPool := range allPools {
-		token0Decimals, token1Decimals, err := u.readTokensDecimals(ctx, curPool.Token0Address, curPool.Token1Address)
-		if err != nil {
-			return nil, nil, err
+		token0Decimals, ok0 := decimalsMap[curPool.Token0Address]
+		token1Decimals, ok1 := decimalsMap[curPool.Token1Address]
+		if !ok0 || !ok1 {
+			logger.WithFields(logger.Fields{
+				"dexType": DexType,
+				"pool":    curPool.PoolAddress.Hex(),
+				"token0":  curPool.Token0Address.Hex(),
+				"token1":  curPool.Token1Address.Hex(),
+			}).Warn("skipping pool: could not fetch decimals for one or more tokens")
+			continue
 		}
 
 		staticExtraBytes, err := json.Marshal(&StaticExtra{
@@ -160,41 +169,54 @@ func (u *PoolsListUpdater) getAllPools(ctx context.Context) ([]PoolWithReserves,
 	return pools, nil
 }
 
-func (u *PoolsListUpdater) readTokensDecimals(ctx context.Context, token0 common.Address, token1 common.Address) (uint8, uint8, error) {
-	var decimals0, decimals1 uint8
+// readAllTokensDecimals fetches ERC20 decimals for all unique token addresses across all
+// pools in one batched TryAggregate call. Tokens whose decimals() call fails are omitted
+// from the returned map; callers must skip pools with missing entries.
+func (u *PoolsListUpdater) readAllTokensDecimals(ctx context.Context, pools []PoolWithReserves) map[common.Address]uint8 {
+	decimalsMap := make(map[common.Address]uint8)
+	var uniqueTokens []common.Address
+	seen := make(map[common.Address]bool)
 
+	for _, pool := range pools {
+		for _, addr := range []common.Address{pool.Token0Address, pool.Token1Address} {
+			if strings.EqualFold(addr.Hex(), valueobject.NativeAddress) {
+				decimalsMap[addr] = 18
+			} else if !seen[addr] {
+				seen[addr] = true
+				uniqueTokens = append(uniqueTokens, addr)
+			}
+		}
+	}
+
+	if len(uniqueTokens) == 0 {
+		return decimalsMap
+	}
+
+	decimalsResults := make([]uint8, len(uniqueTokens))
 	req := u.ethrpcClient.R().SetContext(ctx)
-
-	if strings.EqualFold(valueobject.NativeAddress, token0.String()) {
-		decimals0 = 18
-	} else {
+	for i, addr := range uniqueTokens {
 		req.AddCall(&ethrpc.Call{
 			ABI:    erc20,
-			Target: token0.String(),
+			Target: addr.String(),
 			Method: TokenMethodDecimals,
-			Params: nil,
-		}, []any{&decimals0})
+		}, []any{&decimalsResults[i]})
 	}
 
-	if strings.EqualFold(valueobject.NativeAddress, token1.String()) {
-		decimals1 = 18
-	} else {
-		req.AddCall(&ethrpc.Call{
-			ABI:    erc20,
-			Target: token1.String(),
-			Method: TokenMethodDecimals,
-			Params: nil,
-		}, []any{&decimals1})
-	}
-
-	_, err := req.Aggregate()
+	resp, err := req.TryAggregate()
 	if err != nil {
-		logger.WithFields(logger.Fields{
-			"dexType": DexType,
-			"error":   err,
-		}).Error("can not read token info")
-		return 0, 0, err
+		logger.WithFields(logger.Fields{"dexType": DexType, "error": err}).
+			Error("token decimals multicall failed")
+		return decimalsMap
 	}
 
-	return decimals0, decimals1, nil
+	for i, addr := range uniqueTokens {
+		if !resp.Result[i] {
+			logger.WithFields(logger.Fields{"dexType": DexType, "token": addr.Hex()}).
+				Warn("decimals() reverted for token, skipping")
+			continue
+		}
+		decimalsMap[addr] = decimalsResults[i]
+	}
+
+	return decimalsMap
 }

@@ -31,7 +31,10 @@ const (
 	poolMethodBalances           = "balances"
 	poolMethodPriceScale         = "price_scale"
 	poolMethodPriceOracle        = "price_oracle"
-	poolMethodLastPrices         = "last_prices"
+	poolMethodLastPrices             = "last_prices"
+	poolMethodLastPricesTimestamp        = "last_prices_timestamp"
+	poolMethodMaTime                    = "ma_time"
+	poolMethodPackedRebalancingParams   = "packed_rebalancing_params"
 
 	MaxLoopLimit = 256
 	NumTokens    = 3
@@ -53,6 +56,9 @@ var (
 	U_27e12 = uint256.MustFromDecimal("27000000000000")
 	U_27e6  = uint256.MustFromDecimal("27000000")
 	U_27    = uint256.MustFromDecimal("27")
+
+	// ln(2) * 1e18 — used for half-life based EMA: alpha = exp(-dt * ln(2) / ma_time)
+	Ln2_1e18, _ = int256.FromDec("693147180559945309")
 
 	I_1e48, _ = int256.FromDec("1000000000000000000000000000000000000000000000000")
 	I_1e44, _ = int256.FromDec("100000000000000000000000000000000000000000000")

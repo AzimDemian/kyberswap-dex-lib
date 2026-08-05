@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -302,78 +301,188 @@ func (t *PoolTracker) getPoolTicksFromStateView(
 		"dexID":       t.config.DexID,
 	})
 
+	var staticExtra StaticExtra
+	if err := json.Unmarshal([]byte(p.StaticExtra), &staticExtra); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal pool static extra: %w", err)
+	}
+
 	var extra Extra
-	if err := json.Unmarshal([]byte(p.Extra), &extra); err != nil {
-		return nil, errors.New("failed to unmarshal pool extra")
+	_ = json.Unmarshal([]byte(p.Extra), &extra) // bootstrap: extra may be empty, that's fine
+
+	changedTickIdxs, err := t.getTickIndexesFromLogs(param.Logs)
+	if err != nil {
+		return nil, err
+	}
+	l.Infof("changed ticks count: %d", len(changedTickIdxs))
+
+	var oldTicks []Tick
+	if extra.Extra != nil {
+		oldTicks = extra.Extra.Ticks
 	}
 
-	changedTicks := ticklens.GetChangedTicks(param.Logs)
-	l.Infof("Fetch changed ticks %v", changedTicks)
-
-	changedTicksCount := len(changedTicks)
-	if changedTicksCount == 0 || changedTicksCount > maxChangedTicks {
-		return nil, ErrTooManyChangedTicks
+	// Full scan: bootstrap (no prior state), no log events, or too many per-tick fetches.
+	if len(oldTicks) == 0 || len(changedTickIdxs) == 0 || len(changedTickIdxs) > maxChangedTicks {
+		return t.getAllTicksFromBitmap(ctx, p.Address, staticExtra.TickSpacing)
 	}
 
-	rpcRequest := t.ethrpcClient.NewRequest()
-	rpcRequest.SetContext(ctx)
-
-	stateViewTicks := make([]stateViewTick, changedTicksCount)
-	for i, tickIdx := range changedTicks {
+	// Incremental update: fetch each changed tick from StateView then merge.
+	rpcRequest := t.ethrpcClient.NewRequest().SetContext(ctx)
+	stateViewTicks := make([]stateViewTick, len(changedTickIdxs))
+	for i, tickIdx := range changedTickIdxs {
 		rpcRequest.AddCall(&ethrpc.Call{
 			ABI:    stateViewABI,
 			Target: t.config.StateViewAddress,
 			Method: "getTickInfo",
-			Params: []any{common.HexToHash(p.Address), big.NewInt(tickIdx)},
+			Params: []any{common.HexToHash(p.Address), big.NewInt(int64(tickIdx))},
 		}, []any{&stateViewTicks[i]})
 	}
-
-	resp, err := rpcRequest.Aggregate()
-	if err != nil {
+	if _, err := rpcRequest.Aggregate(); err != nil {
 		return nil, err
 	}
 
-	resTicks := make(map[int64]stateViewTick, len(resp.Request.Calls))
-	for i, tick := range stateViewTicks {
-		resTicks[changedTicks[i]] = tick
+	changedTickMap := make(map[int64]stateViewTick, len(changedTickIdxs))
+	for i, tickIdx := range changedTickIdxs {
+		changedTickMap[int64(tickIdx)] = stateViewTicks[i]
 	}
 
-	combined := make([]ticklens.TickResp, 0, len(changedTicks)+len(extra.Ticks))
-	for _, t := range extra.Ticks {
-		tIdx := int64(t.Index)
-		if slices.Contains(changedTicks, tIdx) {
-			tick := resTicks[tIdx]
-			if tick.LiquidityNet == nil || tick.LiquidityNet.Sign() == 0 {
-				// some changed ticks might be consumed entirely, delete them
-				logger.Debugf("deleted tick %v %v", p.Address, t)
-				continue
-			}
+	isOldTick := make(map[int64]bool, len(oldTicks))
+	combined := make([]ticklens.TickResp, 0, len(oldTicks)+len(changedTickIdxs))
 
-			// changed, use new value
+	// Keep or update existing ticks.
+	for _, tick := range oldTicks {
+		tIdx := int64(tick.Index)
+		isOldTick[tIdx] = true
+		if sv, changed := changedTickMap[tIdx]; changed {
+			if sv.LiquidityNet == nil || sv.LiquidityNet.Sign() == 0 {
+				logger.Debugf("deleted tick %v %v", p.Address, tick.Index)
+				continue // consumed entirely
+			}
 			combined = append(combined, ticklens.TickResp{
 				TickIdx:        strconv.FormatInt(tIdx, 10),
-				LiquidityGross: tick.LiquidityGross.String(),
-				LiquidityNet:   tick.LiquidityNet.String(),
+				LiquidityGross: sv.LiquidityGross.String(),
+				LiquidityNet:   sv.LiquidityNet.String(),
 			})
 		} else {
-			// use old value
 			combined = append(combined, ticklens.TickResp{
-				TickIdx:        strconv.Itoa(t.Index),
-				LiquidityGross: t.LiquidityGross.String(),
-				LiquidityNet:   t.LiquidityNet.String(),
+				TickIdx:        strconv.Itoa(tick.Index),
+				LiquidityGross: tick.LiquidityGross.String(),
+				LiquidityNet:   tick.LiquidityNet.String(),
 			})
 		}
 	}
 
-	// Sort the ticks because function NewTickListDataProvider needs
+	// Add newly initialized ticks (in changedTicks but absent from old state).
+	for i, tickIdx := range changedTickIdxs {
+		tIdx := int64(tickIdx)
+		if isOldTick[tIdx] {
+			continue
+		}
+		sv := stateViewTicks[i]
+		if sv.LiquidityNet != nil && sv.LiquidityNet.Sign() != 0 {
+			combined = append(combined, ticklens.TickResp{
+				TickIdx:        strconv.FormatInt(tIdx, 10),
+				LiquidityGross: sv.LiquidityGross.String(),
+				LiquidityNet:   sv.LiquidityNet.String(),
+			})
+		}
+	}
+
 	sort.SliceStable(combined, func(i, j int) bool {
 		iTick, _ := strconv.Atoi(combined[i].TickIdx)
 		jTick, _ := strconv.Atoi(combined[j].TickIdx)
-
 		return iTick < jTick
 	})
 
 	return combined, nil
+}
+
+// getAllTicksFromBitmap enumerates every initialized tick in a V4 pool by scanning the
+// tick bitmap stored in StateView, then fetching tick data for all found positions.
+func (t *PoolTracker) getAllTicksFromBitmap(
+	ctx context.Context,
+	poolAddress string,
+	tickSpacing int32,
+) ([]ticklens.TickResp, error) {
+	if tickSpacing <= 0 {
+		return nil, fmt.Errorf("invalid tickSpacing: %d", tickSpacing)
+	}
+
+	ts := int64(tickSpacing)
+	// Compressed-tick word range. Truncation matches Solidity's integer division.
+	wordMin := (int64(minRawTick) / ts) >> 8
+	wordMax := (int64(maxRawTick) / ts) >> 8
+
+	poolId := common.HexToHash(poolAddress)
+	numWords := int(wordMax - wordMin + 1)
+	bitmaps := make([]*big.Int, numWords)
+	for i := range bitmaps {
+		bitmaps[i] = new(big.Int)
+	}
+
+	// Fetch all bitmap words, chunked to stay within multicall limits.
+	for start := 0; start < numWords; start += bitmapWordChunkSize {
+		end := start + bitmapWordChunkSize
+		if end > numWords {
+			end = numWords
+		}
+		rpcReq := t.ethrpcClient.NewRequest().SetContext(ctx)
+		for i := start; i < end; i++ {
+			wordPos := int16(wordMin + int64(i))
+			rpcReq.AddCall(&ethrpc.Call{
+				ABI:    stateViewABI,
+				Target: t.config.StateViewAddress,
+				Method: "getTickBitmap",
+				Params: []any{poolId, wordPos},
+			}, []any{&bitmaps[i]})
+		}
+		if _, err := rpcReq.Aggregate(); err != nil {
+			return nil, err
+		}
+	}
+
+	// Decode set bits → raw tick indices.
+	var tickIndexes []int
+	for i, bitmap := range bitmaps {
+		if bitmap.Sign() == 0 {
+			continue
+		}
+		wordPos := wordMin + int64(i)
+		for bitPos := 0; bitPos < 256; bitPos++ {
+			if bitmap.Bit(bitPos) == 1 {
+				compressedTick := wordPos*256 + int64(bitPos)
+				tickIndexes = append(tickIndexes, int(compressedTick*ts))
+			}
+		}
+	}
+
+	if len(tickIndexes) == 0 {
+		return nil, nil
+	}
+
+	ticks, err := t.queryRPCTicksByIndexes(ctx, poolAddress, tickIndexes, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ticklens.TickResp, 0, len(ticks))
+	for _, tick := range ticks {
+		if tick.LiquidityGross == nil || tick.LiquidityGross.Sign() == 0 {
+			continue
+		}
+		result = append(result, ticklens.TickResp{
+			TickIdx:        strconv.Itoa(tick.TickIdx),
+			LiquidityGross: tick.LiquidityGross.String(),
+			LiquidityNet:   tick.LiquidityNet.String(),
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		ti, _ := strconv.Atoi(result[i].TickIdx)
+		tj, _ := strconv.Atoi(result[j].TickIdx)
+		return ti < tj
+	})
+
+	return result, nil
 }
 
 func transformTickRespToTick(tickResp ticklens.TickResp) (Tick, error) {

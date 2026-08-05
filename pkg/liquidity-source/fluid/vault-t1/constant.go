@@ -18,9 +18,10 @@ const (
 )
 
 var (
-	ErrInvalidAmountIn     = errors.New("invalid amountIn: must be greater than zero")
-	ErrInsufficientReserve = errors.New("insufficient reserve: tokenOut amount exceeds reserve")
-	ErrTokenNotFound       = errors.New("token not found in the pool")
+	ErrInvalidAmountIn      = errors.New("invalid amountIn: must be greater than zero")
+	ErrInsufficientReserve  = errors.New("insufficient reserve: tokenOut amount exceeds reserve")
+	ErrTokenNotFound        = errors.New("token not found in the pool")
+	ErrInvalidSwapDirection = errors.New("invalid swap direction: vault t1 only supports debt -> collateral")
 )
 
 var (

@@ -2,7 +2,9 @@ package uniswapv3
 
 import (
 	"bytes"
+	"fmt"
 	"math/big"
+	"strings"
 	"text/template"
 )
 
@@ -13,22 +15,15 @@ type PoolsListQueryParams struct {
 	Skip                   int
 }
 
-type PoolTicksQueryParams struct {
-	AllowSubgraphError bool
-	PoolAddress        string
-	LastTickIdx        string
-}
-
 func getPoolsListQuery(allowSubgraphError bool, lastCreatedAtTimestamp *big.Int, first, skip int) string {
 	var tpl bytes.Buffer
 	td := PoolsListQueryParams{
-		allowSubgraphError,
-		lastCreatedAtTimestamp,
-		first,
-		skip,
+		AllowSubgraphError:     allowSubgraphError,
+		LastCreatedAtTimestamp: lastCreatedAtTimestamp,
+		First:                  first,
+		Skip:                   skip,
 	}
 
-	// Add subgraphError: allow
 	t, err := template.New("poolsListQuery").Parse(`{
 		pools(
 			{{ if .AllowSubgraphError }}subgraphError: allow,{{ end }}
@@ -65,29 +60,33 @@ func getPoolsListQuery(allowSubgraphError bool, lastCreatedAtTimestamp *big.Int,
 		panic(err)
 	}
 
-	err = t.Execute(&tpl, td)
-
-	if err != nil {
+	if err = t.Execute(&tpl, td); err != nil {
 		panic(err)
 	}
 
 	return tpl.String()
 }
 
-func getPoolTicksQuery(allowSubgraphError bool, poolAddress string, lastTickIdx string) string {
+type PoolTicksQueryParams struct {
+	AllowSubgraphError bool
+	PoolAddress        string
+	LastTickIdx        string
+}
+
+func getPoolTicksQuery(allowSubgraphError bool, poolAddress, lastTickIdx string) string {
 	var tpl bytes.Buffer
 	td := PoolTicksQueryParams{
-		allowSubgraphError,
-		poolAddress,
-		lastTickIdx,
+		AllowSubgraphError: allowSubgraphError,
+		PoolAddress:        poolAddress,
+		LastTickIdx:        lastTickIdx,
 	}
 
-	t, err := template.New("poolTicksQuery").Parse(`{
+	t := template.Must(template.New("poolTicksQuery").Parse(`{
 		ticks(
 			{{ if .AllowSubgraphError }}subgraphError: allow,{{ end }}
 			where: {
-				pool: "{{.PoolAddress}}"
-				{{ if .LastTickIdx }}tickIdx_gt: {{.LastTickIdx}},{{ end }}
+				pool: "{{ .PoolAddress }}"
+				{{ if .LastTickIdx }}tickIdx_gt: {{ .LastTickIdx }},{{ end }}
 				liquidityGross_not: 0
 			},
 			orderBy: tickIdx,
@@ -95,20 +94,40 @@ func getPoolTicksQuery(allowSubgraphError bool, poolAddress string, lastTickIdx 
 			first: 1000
 		) {
 			tickIdx
-			liquidityNet
 			liquidityGross
+			liquidityNet
 		}
-	}`)
+	}`))
 
-	if err != nil {
-		panic(err)
-	}
-
-	err = t.Execute(&tpl, td)
-
-	if err != nil {
-		panic(err)
-	}
-
+	_ = t.Execute(&tpl, td)
 	return tpl.String()
+}
+
+// getPoolsByAddressesQuery builds a GraphQL query that fetches specific pools by address
+// using the standard id_in filter supported by The Graph. Used for subgraph fallback
+// when RPC metadata fetch fails for individual pools.
+func getPoolsByAddressesQuery(addresses []string) string {
+	quoted := make([]string, len(addresses))
+	for i, a := range addresses {
+		quoted[i] = fmt.Sprintf("%q", strings.ToLower(a))
+	}
+	return fmt.Sprintf(`{
+		pools(where: { id_in: [%s] }, first: %d) {
+			id
+			feeTier
+			createdAtTimestamp
+			token0 {
+				id
+				name
+				symbol
+				decimals
+			}
+			token1 {
+				id
+				name
+				symbol
+				decimals
+			}
+		}
+	}`, strings.Join(quoted, ", "), len(addresses))
 }

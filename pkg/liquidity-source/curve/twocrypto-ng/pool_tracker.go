@@ -77,6 +77,8 @@ func (t *PoolTracker) getNewPoolState(
 
 		xcpProfit, virtualPrice, allowedExtraProfit, adjustmentStep, lpSupply *big.Int
 
+		lastPricesTimestamp *big.Int
+
 		balances = make([]*big.Int, len(p.Tokens))
 
 		numDepCoins = len(p.Tokens) - 1 // other coins will have price based on the 1st coin
@@ -146,6 +148,21 @@ func (t *PoolTracker) getNewPoolState(
 		Method: poolMethodMath,
 	}, []any{&math})
 
+	calls.AddCall(&ethrpc.Call{
+		ABI:    curveTwocryptoNGABI,
+		Target: p.Address,
+		Method: poolMethodLastTimestamp,
+		Params: nil,
+	}, []any{&lastPricesTimestamp})
+
+	var packedRebalancingParams *big.Int
+	calls.AddCall(&ethrpc.Call{
+		ABI:    curveTwocryptoNGABI,
+		Target: p.Address,
+		Method: poolMethodPackedRebalancingParams,
+		Params: nil,
+	}, []any{&packedRebalancingParams})
+
 	for i := range p.Tokens {
 		calls.AddCall(&ethrpc.Call{
 			ABI:    curveTwocryptoNGABI,
@@ -192,8 +209,14 @@ func (t *PoolTracker) getNewPoolState(
 		XcpProfit:          number.SetFromBig(xcpProfit),
 		VirtualPrice:       number.SetFromBig(virtualPrice),
 		AllowedExtraProfit: number.SetFromBig(allowedExtraProfit),
-		AdjustmentStep:     number.SetFromBig(adjustmentStep),
-		UseCustomMath:      UseCustomMath(math),
+		AdjustmentStep:      number.SetFromBig(adjustmentStep),
+		UseCustomMath:       UseCustomMath(math),
+		LastPricesTimestamp:      lastPricesTimestamp.Int64(),
+		// Both tricrypto and twocrypto deployed contracts use the raw ma_time from
+		// packed_rebalancing_params in their price_oracle VIEW, not the getter
+		// (which applies * 694 / 1000). Verified via debug_traceCall.
+		MaTime:                  number.SetFromBig(new(big.Int).And(packedRebalancingParams, new(big.Int).SetUint64(^uint64(0)))),
+		OracleSnapshotTimestamp: time.Now().Unix(),
 	}
 	extra.PriceScale = make([]uint256.Int, len(priceScales))
 	lo.ForEach(priceScales, func(item *big.Int, i int) { extra.PriceScale[i].SetFromBig(item) })

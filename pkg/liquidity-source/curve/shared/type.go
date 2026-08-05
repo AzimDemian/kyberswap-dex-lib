@@ -24,6 +24,15 @@ type (
 		// for meta pool
 		BasePoolAddress string
 		UnderlyingCoins []CurveCoin
+
+		// extra fields parsed from Curve's HTTP API response, used by the Filter
+		// (resty uses stdlib encoding/json which matches field names case-insensitively
+		// against JSON keys — no struct tags needed).
+		UsdTotal      float64
+		IsBroken      bool
+		GaugeAddress  string
+		CreationTs    int64
+		AssetTypeName string
 	}
 
 	GetPoolsResult struct {

@@ -6,8 +6,9 @@ import (
 
 type (
 	StaticExtra struct {
-		A             *uint256.Int `json:"A"`
-		UseDynamicFee bool         `json:"useDynamicFee"`
+		A                  *uint256.Int `json:"A"`
+		UseDynamicFee      bool         `json:"useDynamicFee"`
+		OracleContractAddr string       `json:"oracleContractAddr,omitempty"`
 	}
 
 	Extra struct {

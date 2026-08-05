@@ -45,6 +45,10 @@ func NewHook(param *uniswapv4.HookParam) uniswapv4.Hook {
 
 	_ = param.HookExtra.Unmarshal(&hook.extra)
 
+	if param.Cfg == nil {
+		return hook
+	}
+
 	hookCfgProperties, exist := param.Cfg.HookConfigs[param.HookAddress]
 	if exist {
 		var hookCfg HookConfig

@@ -7,11 +7,12 @@ type Config struct {
 	SubgraphAPI        string      `json:"subgraphAPI,omitempty"`
 	SubgraphHeaders    http.Header `json:"subgraphHeaders,omitempty"`
 	AllowSubgraphError bool        `json:"allowSubgraphError,omitempty"`
+	AllowSubgraphFetch bool        `json:"allowSubgraphFetch,omitempty"`
 	TickLensAddress    string      `json:"tickLensAddress,omitempty"`
-	PreGenesisPoolPath string      `json:"preGenesisPoolPath,omitempty"`
-	AlwaysUseTickLens  bool        `json:"alwaysUseTickLens,omitempty"` // instead of fetching from subgraph
-
-	preGenesisPoolIDs []string
+	AlwaysUseTickLens  bool        `json:"alwaysUseTickLens,omitempty"`
+	AllowRPCFetch      bool        `json:"allowRPCFetch,omitempty"`
+	StaticPoolList     []string    `json:"staticPoolList,omitempty"`
+	RPCBatchSize       int         `json:"rpcBatchSize,omitempty"`
 }
 
 func (c *Config) IsAllowSubgraphError() bool {
