@@ -11,7 +11,7 @@ type (
 	Extra struct {
 		InitialA          *uint256.Int
 		InitialGamma      *uint256.Int
-		InitialAGammaTime int64
+		InitialAGammaTime int64 `json:",omitempty"`
 		FutureA           *uint256.Int
 		FutureGamma       *uint256.Int
 		FutureAGammaTime  int64
@@ -30,9 +30,10 @@ type (
 		XcpProfit          *uint256.Int
 		VirtualPrice       *uint256.Int
 		AllowedExtraProfit *uint256.Int
-		AdjustmentStep      *uint256.Int
-		UseCustomMath       bool
-		LastPricesTimestamp      int64        `json:"LastPricesTimestamp"`
+		AdjustmentStep     *uint256.Int
+		UseCustomMath      bool `json:",omitempty"`
+
+		LastPricesTimestamp     int64        `json:"LastPricesTimestamp"`
 		MaTime                  *uint256.Int `json:"MaTime"`
 		OracleSnapshotTimestamp int64        `json:"OracleSnapshotTimestamp,omitempty"`
 	}
