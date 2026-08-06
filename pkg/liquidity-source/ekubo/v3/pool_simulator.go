@@ -10,25 +10,25 @@ import (
 	"github.com/holiman/uint256"
 	"github.com/samber/lo"
 
-	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/ekubo/v3/math"
-	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/ekubo/v3/quoting"
-
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/entity"
+	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/ekubo/v3/math"
+	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/ekubo/v3/pools"
+	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/ekubo/v3/quoting"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/source/pool"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/big256"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/bignumber"
+	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/valueobject"
 )
 
 var _ = pool.RegisterFactory0(DexType, NewPoolSimulator)
 
 type (
-	EkuboPool = Pool
+	EkuboPool = pools.Pool
 
 	PoolSimulator struct {
 		pool.Pool
 		EkuboPool
-		Core   common.Address
-		Router common.Address
+		Core common.Address
 	}
 )
 
@@ -114,7 +114,7 @@ func (p *PoolSimulator) quoteWithZeroChecksAndBaseGasCost(amountBig *big.Int, is
 
 func (p *PoolSimulator) CloneState() pool.IPoolSimulator {
 	cloned := *p
-	cloned.EkuboPool = p.EkuboPool.CloneState().(EkuboPool)
+	cloned.EkuboPool = p.CloneSwapStateOnly()
 	return &cloned
 }
 
@@ -124,10 +124,27 @@ func (p *PoolSimulator) UpdateBalance(params pool.UpdateBalanceParams) {
 
 func (p *PoolSimulator) GetMetaInfo(_, _ string) any {
 	return Meta{
-		MevCaptureRouter: p.Router,
-		Core:             p.Core,
-		PoolKey:          p.EkuboPool.GetKey().ToAbi(),
+		Core:    p.Core,
+		PoolKey: p.EkuboPool.GetKey().ToAbi(),
 	}
+}
+
+func (p *PoolSimulator) SwapReceiveNativeIn(tokenIn, tokenOut string, _ valueobject.ChainID) bool {
+	forward := strings.EqualFold(tokenIn, p.GetTokens()[0])
+	metaInfo := p.GetMetaInfo(tokenIn, tokenOut).(Meta)
+
+	tokenInKey := lo.Ternary(forward, metaInfo.PoolKey.Token0, metaInfo.PoolKey.Token1)
+
+	return valueobject.IsZeroAddress(tokenInKey)
+}
+
+func (p *PoolSimulator) SwapReturnNativeOut(tokenIn, tokenOut string, _ valueobject.ChainID) bool {
+	forward := strings.EqualFold(tokenIn, p.GetTokens()[0])
+	metaInfo := p.GetMetaInfo(tokenIn, tokenOut).(Meta)
+
+	tokenOutKey := lo.Ternary(forward, metaInfo.PoolKey.Token1, metaInfo.PoolKey.Token0)
+
+	return valueobject.IsZeroAddress(tokenOutKey)
 }
 
 func NewPoolSimulator(entityPool entity.Pool) (*PoolSimulator, error) {
@@ -160,6 +177,5 @@ func NewPoolSimulator(entityPool entity.Pool) (*PoolSimulator, error) {
 		}},
 		EkuboPool: ekuboPool,
 		Core:      staticExtra.Core,
-		Router:    staticExtra.MevCaptureRouter,
 	}, nil
 }

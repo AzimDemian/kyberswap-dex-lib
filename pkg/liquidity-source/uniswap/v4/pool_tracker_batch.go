@@ -26,8 +26,9 @@ type rpcBatchOut struct {
 	Slot0        Slot0Data
 	TickSpacing  int32
 	Reserves     entity.PoolReserves
-	HookExtra    any
+	HookExtra    json.RawMessage
 	HooksAddress string
+	Exchange     string
 }
 
 func pickSnapshotBlock(headBlock uint64, logsByPool LogsByPoolAddr, blockHeaders map[uint64]entity.BlockHeader) uint64 {
@@ -149,17 +150,22 @@ func (t *PoolTracker) GetNewStates(
 				Tick:         rpc.Slot0.Tick,
 				Ticks:        entityPoolTicks,
 			},
-			HookExtra: hookExtraToString(rpc.HookExtra),
+			HookExtra: rpc.HookExtra,
 		})
 		if err != nil {
 			return nil, err
 		}
 
 		p.Extra = string(extraBytes)
-		p.Reserves = rpc.Reserves
+		if rpc.Reserves != nil {
+			p.Reserves = rpc.Reserves
+		} else {
+			reserve0, reserve1 := EstimateReservesFromTicks(rpc.Slot0.SqrtPriceX96, entityPoolTicks)
+			p.Reserves = entity.PoolReserves{reserve0.String(), reserve1.String()}
+		}
 		p.BlockNumber = snapshotBlock
 		p.Timestamp = t.estimateLastActivityTime(&p, logs, blockHeaders)
-		p.Exchange = t.getExchange(&p)
+		p.Exchange = rpc.Exchange
 
 		out = append(out, p)
 	}
@@ -226,19 +232,11 @@ func (t *PoolTracker) fetchRPCDataBatch(
 		hookParam := &HookParam{Cfg: t.config, RpcClient: t.ethrpcClient, Pool: &pools[i], BlockNumber: &bn}
 		hook, _ := GetHook(hookAddress, hookParam)
 
+		// A nil result is not an error: it means the hook has no opinion on reserves,
+		// and the caller estimates them from ticks instead.
 		reserves, hookErr := hook.GetReserves(ctx, hookParam)
 		if hookErr != nil {
 			return nil, hookErr
-		}
-		if reserves == nil {
-			var r0, r1 big.Int
-			if slot0[i].SqrtPriceX96.Sign() != 0 {
-				r0.Mul(liq[i], Q96)
-				r0.Div(&r0, slot0[i].SqrtPriceX96)
-			}
-			r1.Mul(liq[i], slot0[i].SqrtPriceX96)
-			r1.Div(&r1, Q96)
-			reserves = entity.PoolReserves{r0.String(), r1.String()}
 		}
 
 		hookExtra, hookErr := hook.Track(ctx, hookParam)
@@ -253,6 +251,7 @@ func (t *PoolTracker) fetchRPCDataBatch(
 			Reserves:     reserves,
 			HookExtra:    hookExtra,
 			HooksAddress: hookAddress.Hex(),
+			Exchange:     hook.GetExchange(),
 		}
 	}
 
@@ -373,21 +372,4 @@ func (t *PoolTracker) getAffectedTickIdsFromLogsBatch(logs []ethtypes.Log) ([]in
 	}
 
 	return lo.Keys(affected), nil
-}
-
-func hookExtraToString(v any) string {
-	switch t := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return t
-	case []byte:
-		return string(t)
-	default:
-		b, err := json.Marshal(t)
-		if err != nil {
-			return fmt.Sprintf("%v", t)
-		}
-		return string(b)
-	}
 }

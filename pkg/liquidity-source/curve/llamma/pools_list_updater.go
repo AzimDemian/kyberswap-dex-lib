@@ -87,15 +87,14 @@ func (u *PoolsListUpdater) getPools(ctx context.Context, offset int, batchSize i
 	)
 
 	factoryCalls := u.ethrpcClient.NewRequest().SetContext(ctx)
-	for i := 0; i < batchSize; i++ {
+	for i := range batchSize {
 		idx := big.NewInt(int64(offset + i))
 		factoryCalls.AddCall(&ethrpc.Call{
 			ABI:    CurveControllerFactoryABI,
 			Target: u.config.FactoryAddress,
 			Method: factoryMethodAmms,
 			Params: []any{idx},
-		}, []any{&amms[i]})
-		factoryCalls.AddCall(&ethrpc.Call{
+		}, []any{&amms[i]}).AddCall(&ethrpc.Call{
 			ABI:    CurveControllerFactoryABI,
 			Target: u.config.FactoryAddress,
 			Method: factoryMethodCollaterals,
@@ -107,18 +106,16 @@ func (u *PoolsListUpdater) getPools(ctx context.Context, offset int, batchSize i
 	}
 
 	ammCalls := u.ethrpcClient.NewRequest().SetContext(ctx)
-	for i := 0; i < batchSize; i++ {
+	for i := range batchSize {
 		ammCalls.AddCall(&ethrpc.Call{
 			ABI:    CurveLlammaABI,
 			Target: amms[i].String(),
 			Method: LlammaMethodA,
-		}, []any{&aCoefficients[i]})
-		ammCalls.AddCall(&ethrpc.Call{
+		}, []any{&aCoefficients[i]}).AddCall(&ethrpc.Call{
 			ABI:    CurveLlammaABI,
 			Target: amms[i].String(),
 			Method: llammaMethodPriceOracleContract,
-		}, []any{&oracleContracts[i]})
-		ammCalls.AddCall(&ethrpc.Call{
+		}, []any{&oracleContracts[i]}).AddCall(&ethrpc.Call{
 			ABI:    shared.ERC20ABI,
 			Target: collaterals[i].String(),
 			Method: shared.ERC20MethodDecimals,

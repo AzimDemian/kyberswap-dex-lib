@@ -25,10 +25,10 @@ import (
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/metrics"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/ticklens"
 	graphqlpkg "github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/graphql"
+	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/valueobject"
 )
 
 var _ = pooltrack.RegisterFactoryCEG(DexTypeUniswapV3, NewTracker)
-var _ = pooltrack.RegisterTicksBasedFactoryCEG(DexTypeUniswapV3, NewTracker)
 
 type Tracker struct {
 	config        *Config
@@ -49,9 +49,8 @@ func NewTracker(
 }
 
 
-func (t *Tracker) GetNewState(ctx context.Context, p entity.Pool, logs []ethtypes.Log,
-	blockHeaders map[uint64]entity.BlockHeader) (entity.Pool, error) {
-	if len(logs) == 0 {
+func (t *Tracker) GetNewPoolState(ctx context.Context, p entity.Pool, param poolpkg.GetNewPoolStateParams) (entity.Pool, error) {
+	if len(param.Logs) == 0 {
 		return p, nil
 	}
 
@@ -60,12 +59,12 @@ func (t *Tracker) GetNewState(ctx context.Context, p entity.Pool, logs []ethtype
 		"exchange": p.Exchange,
 	})
 
-	ticksBasedPool, err := t.newTicksBasedPool(ctx, p, logs, l)
+	ticksBasedPool, err := t.newTicksBasedPool(ctx, p, param.Logs, l)
 	if err != nil {
 		return p, err
 	}
 
-	return t.updateState(ctx, p, ticksBasedPool, logs, blockHeaders, l)
+	return t.updateState(ctx, p, ticksBasedPool, param.Logs, param.BlockHeaders, l)
 }
 
 func (t *Tracker) FetchPoolTicks(ctx context.Context, p entity.Pool) (entity.Pool, error) {
@@ -237,7 +236,7 @@ func (t *Tracker) computeTicksFromLogs(
 	affectedTickSet := make(map[int]struct{})
 
 	for _, event := range logs {
-		if len(event.Topics) == 0 || eth.IsZeroAddress(event.Address) {
+		if len(event.Topics) == 0 || valueobject.IsZeroAddress(event.Address) {
 			continue
 		}
 
@@ -378,13 +377,16 @@ func (t *Tracker) updateState(
 		return entityPoolTicks[i].Index < entityPoolTicks[j].Index
 	})
 
-	extraBytes, err := json.Marshal(Extra{
+	extra := Extra{
 		Liquidity:    rpcState.Liquidity,
 		SqrtPriceX96: rpcState.Slot0.SqrtPriceX96,
-		TickSpacing:  rpcState.TickSpacing.Uint64(),
 		Tick:         rpcState.Slot0.Tick,
 		Ticks:        entityPoolTicks,
-	})
+	}
+	if rpcState.TickSpacing != nil {
+		extra.TickSpacing = rpcState.TickSpacing.Uint64()
+	}
+	extraBytes, err := json.Marshal(extra)
 	if err != nil {
 		l.WithFields(logger.Fields{
 			"error": err,
@@ -406,7 +408,7 @@ func (t *Tracker) getAffectedTickIdsFromLogs(logs []ethtypes.Log) ([]int, error)
 	affectedTickIds := make(map[int]struct{})
 
 	for _, event := range logs {
-		if len(event.Topics) == 0 || eth.IsZeroAddress(event.Address) {
+		if len(event.Topics) == 0 || valueobject.IsZeroAddress(event.Address) {
 			continue
 		}
 
@@ -427,7 +429,7 @@ func (t *Tracker) getAffectedTickIdsFromLogs(logs []ethtypes.Log) ([]int, error)
 }
 
 func (t *Tracker) extractEventData(event ethtypes.Log) (int, int, *big.Int, error) {
-	if len(event.Topics) == 0 || eth.IsZeroAddress(event.Address) {
+	if len(event.Topics) == 0 || valueobject.IsZeroAddress(event.Address) {
 		return 0, 0, big.NewInt(0), nil
 	}
 
@@ -573,7 +575,7 @@ func (t *Tracker) estimateLastActivityTime(p *entity.Pool, logs []ethtypes.Log,
 	return p.Timestamp
 }
 
-func (t *Tracker) GetNewPoolState(ctx context.Context, p entity.Pool, _ poolpkg.GetNewPoolStateParams) (entity.Pool, error) {
+func (t *Tracker) BootstrapPoolState(ctx context.Context, p entity.Pool, _ poolpkg.GetNewPoolStateParams) (entity.Pool, error) {
 	l := logger.WithFields(logger.Fields{
 		"poolAddress": p.Address,
 		"dexID":       t.config.DexID,
