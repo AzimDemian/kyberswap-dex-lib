@@ -1,0 +1,9 @@
+[
+  {
+    "name": "getMarketCap",
+    "type": "function",
+    "inputs": [{ "name": "tokenAddress", "type": "address" }],
+    "outputs": [{ "name": "marketCapETH", "type": "uint256" }],
+    "stateMutability": "view"
+  }
+]

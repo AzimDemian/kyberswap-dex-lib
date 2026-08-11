@@ -1,0 +1,26 @@
+[
+  {
+    "name": "factory",
+    "type": "function",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "address" }],
+    "stateMutability": "view"
+  },
+  {
+    "name": "getFeeTiers",
+    "type": "function",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple[]",
+        "components": [
+          { "name": "mcapThresholdEth", "type": "uint128" },
+          { "name": "totalBps", "type": "uint128" },
+          { "name": "platformBps", "type": "uint128" }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  }
+]
