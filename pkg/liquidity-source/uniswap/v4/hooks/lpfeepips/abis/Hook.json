@@ -1,0 +1,16 @@
+[
+  {
+    "name": "LP_FEE_PIPS",
+    "type": "function",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "name": "BASIS_POINTS",
+    "type": "function",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "view"
+  }
+]

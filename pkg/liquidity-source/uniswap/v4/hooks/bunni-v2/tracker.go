@@ -116,6 +116,13 @@ func (h *Hook) Track(ctx context.Context, param *uniswapv4.HookParam) (json.RawM
 		Method: "poolState",
 		Params: []any{poolId},
 	}, []any{&poolState})
+	var pauseStatus PauseStatusRPC
+	req1.AddCall(&ethrpc.Call{
+		ABI:    bunniHubABI,
+		Target: hubAddress,
+		Method: "getPauseStatus",
+		Params: nil,
+	}, []any{&pauseStatus})
 	req1.AddCall(&ethrpc.Call{
 		ABI:    erc20ABI,
 		Target: token0Address,
@@ -133,6 +140,9 @@ func (h *Hook) Track(ctx context.Context, param *uniswapv4.HookParam) (json.RawM
 	if err != nil {
 		return nil, err
 	}
+
+	hookExtra.HubPauseFlags = pauseStatus.PauseFlags
+	hookExtra.HubUnpauseFuse = pauseStatus.UnpauseFuse
 
 	hookExtra.Slot0 = Slot0{
 		SqrtPriceX96:       uint256.MustFromBig(slot0.SqrtPriceX96),

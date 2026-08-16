@@ -42,13 +42,29 @@ func NewPoolSimulator(entityPool entity.Pool, chainID valueobject.ChainID) (*Poo
 		Pool:      &entityPool,
 		HookExtra: HookExtra(extra.HookExtra),
 	})
-	if !ok && HasSwapPermissions(staticExtra.HooksAddress) {
-		return nil, shared.ErrUnsupportedHook
+	isDynamicFee := shared.IsDynamicFee(staticExtra.Fee)
+	// HasSwapPermissions covers the normal before/afterSwap bits; ChangesSwapDeltas
+	// is included too since a mined address could in principle set a returns-delta
+	// bit without the corresponding before/afterSwap bit (on-chain that flag would
+	// then just never fire, but we don't want to rely on that to decide safety).
+	if hooksAddr := staticExtra.HooksAddress; !ok &&
+		(HasSwapPermissions(hooksAddr) || ChangesSwapDeltas(hooksAddr)) {
+		// No registered adapter. Only reject if the hook's permission bits
+		// mean BaseHook's zero-delta/zero-fee-override behavior could
+		// genuinely misprice the swap (see UnknownHookUnsafe); a hook that
+		// can merely observe/revert (allowlist, time gate, accounting, ...)
+		// is priced correctly by BaseHook, so let it through instead of
+		// dropping the pool entirely.
+		unsafe := UnknownHookUnsafe(hooksAddr, isDynamicFee)
+		RecordUnknownHook(hooksAddr, !unsafe)
+		if unsafe {
+			return nil, shared.ErrUnsupportedHook
+		}
 	}
 
 	allowEmptyTicks := hook.AllowEmptyTicks()
 
-	if shared.IsDynamicFee(staticExtra.Fee) {
+	if isDynamicFee {
 		// staticExtra.Fee/entityPool.SwapFee here is PoolKey.fee as read from
 		// chain, which for a dynamic-fee pool is LPFeeLibrary.DYNAMIC_FEE_FLAG
 		// (0x800000 = 8_388_608), not a real fee -- it's a marker meaning "ask
