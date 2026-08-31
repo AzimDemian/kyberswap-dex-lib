@@ -11,6 +11,7 @@ import (
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/entity"
 	uniswapv4 "github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/uniswap/v4"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/uniswap/v4/hooks/ethfee"
+	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/bignumber"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/valueobject"
 )
 
@@ -41,9 +42,6 @@ var (
 type Hook struct {
 	ethfee.Hook
 	m methods // unexported: never touched by JSON (de)serialization, set fresh per HookFactory closure
-
-	// unsupported is true when the pool has no native/wrapped-native side.
-	unsupported bool
 }
 
 var _ = uniswapv4.RegisterHooksFactory(newFactory(splitDenomMethods), SplitDenomAddresses...)
@@ -52,15 +50,18 @@ var _ = uniswapv4.RegisterHooksFactory(newFactory(bpsDenomMethods), BpsDenomAddr
 func newFactory(m methods) uniswapv4.HookFactory {
 	return func(param *uniswapv4.HookParam) uniswapv4.Hook {
 		hook := &Hook{
-			Hook: ethfee.Hook{BaseHook: &uniswapv4.BaseHook{Exchange: valueobject.ExchangeUniswapV4FeeBps}},
-			m:    m,
+			Hook: ethfee.Hook{
+				BaseHook:       &uniswapv4.BaseHook{Exchange: valueobject.ExchangeUniswapV4FeeBps},
+				UnsupportedErr: ErrPoolHasNoNativeCurrency,
+			},
+			m: m,
 		}
 		_ = param.HookExtra.Unmarshal(hook)
 
 		if pool := param.Pool; pool != nil && len(pool.Tokens) == 2 {
 			isToken0, ok := ethfee.NativeCurrencyIsToken0(pool, param.Cfg.ChainID)
 			hook.FeeCurrencyIsToken0 = isToken0
-			hook.unsupported = !ok
+			hook.Unsupported = !ok
 		}
 		return hook
 	}
@@ -81,7 +82,7 @@ func (h *Hook) Track(ctx context.Context, param *uniswapv4.HookParam) (json.RawM
 	}, []any{&denom})
 
 	// launchToken, ok mirrors New()'s own native-side check: a pool with no
-	// native/wrapped-native side is already marked h.unsupported and rejected
+	// native/wrapped-native side is already marked h.Unsupported and rejected
 	// at BeforeSwap/AfterSwap regardless of FeeBps, so if we can't identify a
 	// launch token here we simply skip the graduation query rather than fail
 	// Track() itself -- consistent with how `unsupported` is handled
@@ -110,7 +111,7 @@ func (h *Hook) Track(ctx context.Context, param *uniswapv4.HookParam) (json.RawM
 	case denom == nil || denom.Sign() == 0:
 		h.FeeBps = big.NewInt(0)
 	default:
-		h.FeeBps = new(big.Int).Quo(new(big.Int).Mul(fee, ethfee.FeeBpsDenom), denom)
+		h.FeeBps = bignumber.MulDivDown(new(big.Int), fee, ethfee.FeeBpsDenom, denom)
 	}
 
 	return json.Marshal(h)
@@ -137,23 +138,13 @@ func nonNativeToken(pool *entity.Pool) (common.Address, bool) {
 	}
 }
 
-func (h *Hook) BeforeSwap(params *uniswapv4.BeforeSwapParams) (*uniswapv4.BeforeSwapResult, error) {
-	if h.unsupported {
-		return nil, ErrPoolHasNoNativeCurrency
-	}
-	return h.Hook.BeforeSwap(params)
-}
-
-func (h *Hook) AfterSwap(params *uniswapv4.AfterSwapParams) (*uniswapv4.AfterSwapResult, error) {
-	if h.unsupported {
-		return nil, ErrPoolHasNoNativeCurrency
-	}
-	return h.Hook.AfterSwap(params)
-}
-
-// CloneState is overridden rather than inherited from ethfee.Hook -- see
-// feehookv3's identical override for the reasoning (unsupported and m live
-// on *this* type).
+// CloneState is overridden rather than inherited from ethfee.Hook because
+// `m` lives on *this* type, not on ethfee.Hook (unlike Unsupported/
+// UnsupportedErr, which ethfee.Hook's own CloneState already preserves
+// correctly -- see its doc comment). m itself is never needed post-clone
+// (only Track() reads it, and Track() is never called on a cloned pool), so
+// this override exists purely so the dynamic type stays *feebps.Hook rather
+// than *ethfee.Hook.
 func (h *Hook) CloneState() uniswapv4.Hook {
 	cloned := *h
 	return &cloned

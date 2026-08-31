@@ -9,6 +9,7 @@ import (
 
 	uniswapv4 "github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/uniswap/v4"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/uniswap/v4/hooks/ethfee"
+	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/bignumber"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/valueobject"
 )
 
@@ -17,12 +18,10 @@ import (
 // afterSwapReturnDelta, structurally identical to the FeeHookV3/klik shape
 // that ethfee.Hook already generalizes -- the only per-deployment detail is
 // which view functions to read the current fee from.
+// ethfee.Hook.Unsupported carries the no-native-currency revert gate, so no
+// BeforeSwap/AfterSwap/CloneState override is needed here.
 type Hook struct {
 	ethfee.Hook
-
-	// unsupported is true when the pool has no native/wrapped-native side.
-	// See ErrPoolHasNoNativeCurrency.
-	unsupported bool
 }
 
 var _ = uniswapv4.RegisterHooksFactory(func(param *uniswapv4.HookParam) uniswapv4.Hook {
@@ -33,14 +32,15 @@ var _ = uniswapv4.RegisterHooksFactory(func(param *uniswapv4.HookParam) uniswapv
 // construct one directly without going through the address registry.
 func New(param *uniswapv4.HookParam) *Hook {
 	hook := &Hook{Hook: ethfee.Hook{
-		BaseHook: &uniswapv4.BaseHook{Exchange: valueobject.ExchangeUniswapV4LpFeePips},
+		BaseHook:       &uniswapv4.BaseHook{Exchange: valueobject.ExchangeUniswapV4LpFeePips},
+		UnsupportedErr: ErrPoolHasNoNativeCurrency,
 	}}
 	_ = param.HookExtra.Unmarshal(hook)
 
 	if pool := param.Pool; pool != nil && len(pool.Tokens) == 2 {
 		isToken0, ok := ethfee.NativeCurrencyIsToken0(pool, param.Cfg.ChainID)
 		hook.FeeCurrencyIsToken0 = isToken0
-		hook.unsupported = !ok
+		hook.Unsupported = !ok
 	}
 	return hook
 }
@@ -71,32 +71,10 @@ func (h *Hook) Track(ctx context.Context, param *uniswapv4.HookParam) (json.RawM
 	if basisPoints == nil || basisPoints.Sign() == 0 {
 		h.FeeBps = big.NewInt(0)
 	} else {
-		h.FeeBps = new(big.Int).Quo(new(big.Int).Mul(lpFeePips, ethfee.FeeBpsDenom), basisPoints)
+		h.FeeBps = bignumber.MulDivDown(new(big.Int), lpFeePips, ethfee.FeeBpsDenom, basisPoints)
 	}
 
 	return json.Marshal(h)
-}
-
-func (h *Hook) BeforeSwap(params *uniswapv4.BeforeSwapParams) (*uniswapv4.BeforeSwapResult, error) {
-	if h.unsupported {
-		return nil, ErrPoolHasNoNativeCurrency
-	}
-	return h.Hook.BeforeSwap(params)
-}
-
-func (h *Hook) AfterSwap(params *uniswapv4.AfterSwapParams) (*uniswapv4.AfterSwapResult, error) {
-	if h.unsupported {
-		return nil, ErrPoolHasNoNativeCurrency
-	}
-	return h.Hook.AfterSwap(params)
-}
-
-// CloneState is overridden (rather than inherited from ethfee.Hook) because
-// `unsupported` lives on *this* type, not on ethfee.Hook -- see feehookv3's
-// identical override for the reasoning.
-func (h *Hook) CloneState() uniswapv4.Hook {
-	cloned := *h
-	return &cloned
 }
 
 var _ uniswapv4.Hook = (*Hook)(nil)

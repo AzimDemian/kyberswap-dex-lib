@@ -17,8 +17,13 @@
 package ethfee
 
 import (
+	"context"
 	"math/big"
 
+	"github.com/KyberNetwork/ethrpc"
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/goccy/go-json"
 	"github.com/samber/lo"
 
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/entity"
@@ -44,11 +49,23 @@ var FeeBpsDenom = big.NewInt(10_000)
 // token the fee is denominated in (almost always the native/wrapped-native
 // token, which -- because v4 always sorts the native currency first --
 // means this is almost always true).
+//
+// Unsupported/UnsupportedErr are optional: a concrete hook whose on-chain
+// _beforeSwap unconditionally reverts for pools with no native/wrapped-
+// native side (FeeHookV3, mcapfee, lpfeepips, feebps all do) sets these from
+// New() instead of hand-rolling its own BeforeSwap/AfterSwap/CloneState
+// overrides -- both fields live directly on this type, so the CloneState
+// below already preserves them correctly with no per-package override
+// needed. A hook that has no such gate (e.g. klik, which charges zero fee
+// instead of reverting) simply leaves them unset.
 type Hook struct {
 	*uniswapv4.BaseHook `json:"-"`
 
 	FeeBps              *big.Int `json:"f"`
 	FeeCurrencyIsToken0 bool     `json:"c0"`
+
+	Unsupported    bool  `json:"-"`
+	UnsupportedErr error `json:"-"`
 }
 
 // feeCurrencySpecified reports whether the fee currency is the side of the
@@ -77,6 +94,9 @@ func (h *Hook) feeCurrencySpecified(calcOut, zeroForOne bool) bool {
 // exactly what the on-chain hook reads as its ethAmount/specifiedAmount),
 // so the fee can be deducted before the AMM curve runs.
 func (h *Hook) BeforeSwap(params *uniswapv4.BeforeSwapParams) (*uniswapv4.BeforeSwapResult, error) {
+	if h.Unsupported {
+		return nil, h.UnsupportedErr
+	}
 	deltaSpecified := bignumber.ZeroBI
 	if h.FeeBps != nil && h.FeeBps.Sign() > 0 && h.feeCurrencySpecified(params.CalcOut, params.ZeroForOne) {
 		deltaSpecified = bignumber.MulDivDown(new(big.Int), params.AmountSpecified, h.FeeBps, FeeBpsDenom)
@@ -93,6 +113,9 @@ func (h *Hook) BeforeSwap(params *uniswapv4.BeforeSwapParams) (*uniswapv4.Before
 // CalcIn) after the fact -- mirroring the on-chain hook reading the actual
 // BalanceDelta in _afterSwap instead of params.amountSpecified.
 func (h *Hook) AfterSwap(params *uniswapv4.AfterSwapParams) (*uniswapv4.AfterSwapResult, error) {
+	if h.Unsupported {
+		return nil, h.UnsupportedErr
+	}
 	hookFee := bignumber.ZeroBI
 	if h.FeeBps != nil && h.FeeBps.Sign() > 0 && !h.feeCurrencySpecified(params.CalcOut, params.ZeroForOne) {
 		amount := lo.Ternary(params.CalcOut, params.AmountOut, params.AmountIn)
@@ -110,10 +133,11 @@ func (h *Hook) AfterSwap(params *uniswapv4.AfterSwapParams) (*uniswapv4.AfterSwa
 // ethfee.Hook (not on uniswapv4.Hook), Go's method promotion means this
 // CloneState always returns dynamic type *ethfee.Hook, never the embedding
 // package's own type. That's harmless as long as the embedding hook adds no
-// extra fields of its own (FeeBps/FeeCurrencyIsToken0/Exchange all survive
-// correctly, and Track() is never called on a cloned pool). If a future
-// hook in this family DOES need extra mutable state, override CloneState in
-// that package the way hooks/st0x does.
+// extra fields of its own (FeeBps/FeeCurrencyIsToken0/Exchange/Unsupported/
+// UnsupportedErr all survive correctly, and Track() is never called on a
+// cloned pool). If a future hook in this family DOES need extra mutable
+// state beyond what's declared on this type, override CloneState in that
+// package the way hooks/st0x does.
 func (h *Hook) CloneState() uniswapv4.Hook {
 	cloned := *h
 	return &cloned
@@ -133,4 +157,44 @@ func NativeCurrencyIsToken0(pool *entity.Pool, chainID valueobject.ChainID) (isT
 		return false, true
 	}
 	return false, false
+}
+
+// TrackCurrentFeeBps reads the current fee, in bps, for hooks that expose it
+// directly via a `currentFeeBps(PoolKey) view` getter (FeeHookV3 and mcapfee
+// both do -- see each package's constant.go for how their addresses were
+// vetted). The fee schedule itself (tier table, custom fees, decay curve)
+// lives entirely on-chain; this just builds the PoolKey from the pool's
+// StaticExtra and makes the one call, so callers only need Track() to be
+// `return ethfee.TrackCurrentFeeBps(ctx, param, hookABI)`.
+func TrackCurrentFeeBps(ctx context.Context, param *uniswapv4.HookParam, hookABI abi.ABI) (*big.Int, error) {
+	var staticExtra uniswapv4.StaticExtra
+	if err := json.Unmarshal([]byte(param.Pool.StaticExtra), &staticExtra); err != nil {
+		return nil, err
+	}
+
+	currency0, currency1 := uniswapv4.NativeTokenAddress, uniswapv4.NativeTokenAddress
+	if !staticExtra.IsNative[0] {
+		currency0 = common.HexToAddress(param.Pool.Tokens[0].Address)
+	}
+	if !staticExtra.IsNative[1] {
+		currency1 = common.HexToAddress(param.Pool.Tokens[1].Address)
+	}
+
+	var feeBps *big.Int
+	if _, err := param.RpcClient.NewRequest().SetContext(ctx).SetBlockNumber(param.BlockNumber).AddCall(&ethrpc.Call{
+		ABI:    hookABI,
+		Target: param.HookAddress.Hex(),
+		Method: "currentFeeBps",
+		Params: []any{uniswapv4.PoolKey{
+			Currency0:   currency0,
+			Currency1:   currency1,
+			Fee:         big.NewInt(int64(staticExtra.Fee)),
+			TickSpacing: big.NewInt(int64(staticExtra.TickSpacing)),
+			Hooks:       staticExtra.HooksAddress,
+		}},
+	}, []any{&feeBps}).Call(); err != nil {
+		return nil, err
+	}
+
+	return feeBps, nil
 }

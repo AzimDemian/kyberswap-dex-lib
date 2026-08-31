@@ -13,7 +13,9 @@ import (
 func TestUnsupportedPoolRejectsSwaps(t *testing.T) {
 	t.Parallel()
 
-	h := &Hook{Hook: ethfee.Hook{BaseHook: &uniswapv4.BaseHook{}}, unsupported: true}
+	h := &Hook{Hook: ethfee.Hook{
+		BaseHook: &uniswapv4.BaseHook{}, Unsupported: true, UnsupportedErr: ErrPoolHasNoNativeCurrency,
+	}}
 
 	_, err := h.BeforeSwap(&uniswapv4.BeforeSwapParams{CalcOut: true, ZeroForOne: true})
 	assert.ErrorIs(t, err, ErrPoolHasNoNativeCurrency)
@@ -24,11 +26,16 @@ func TestUnsupportedPoolRejectsSwaps(t *testing.T) {
 
 // TestCloneState_PreservesUnsupportedGuard is the same regression class
 // documented on feehookv3's identical test -- here it also guards that the
-// clone keeps the right `m` method-name pair, not just `unsupported`.
+// clone keeps the right `m` method-name pair, since (unlike
+// Unsupported/UnsupportedErr, which now live on ethfee.Hook itself) `m` is
+// feebps-specific and only survives because feebps.Hook still overrides
+// CloneState.
 func TestCloneState_PreservesUnsupportedGuard(t *testing.T) {
 	t.Parallel()
 
-	h := &Hook{Hook: ethfee.Hook{BaseHook: &uniswapv4.BaseHook{}}, m: bpsDenomMethods, unsupported: true}
+	h := &Hook{Hook: ethfee.Hook{
+		BaseHook: &uniswapv4.BaseHook{}, Unsupported: true, UnsupportedErr: ErrPoolHasNoNativeCurrency,
+	}, m: bpsDenomMethods}
 	cloned := h.CloneState()
 
 	typed, isFeeBps := cloned.(*Hook)

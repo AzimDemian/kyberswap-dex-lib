@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	uniswapv4 "github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/uniswap/v4"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/uniswap/v4/hooks/ethfee"
@@ -17,7 +16,9 @@ import (
 func TestUnsupportedPoolRejectsSwaps(t *testing.T) {
 	t.Parallel()
 
-	h := &Hook{Hook: ethfee.Hook{BaseHook: &uniswapv4.BaseHook{}}, unsupported: true}
+	h := &Hook{Hook: ethfee.Hook{
+		BaseHook: &uniswapv4.BaseHook{}, Unsupported: true, UnsupportedErr: ErrPoolHasNoNativeCurrency,
+	}}
 
 	_, err := h.BeforeSwap(&uniswapv4.BeforeSwapParams{CalcOut: true, ZeroForOne: true})
 	assert.ErrorIs(t, err, ErrPoolHasNoNativeCurrency)
@@ -28,20 +29,19 @@ func TestUnsupportedPoolRejectsSwaps(t *testing.T) {
 
 // TestCloneState_PreservesUnsupportedGuard is a regression test for a bug
 // class that's easy to hit in this codebase: ethfee.Hook.BeforeSwap/
-// AfterSwap/CloneState are defined directly on *ethfee.Hook, so any
-// concrete hook that embeds it WITHOUT overriding CloneState gets a clone
-// whose dynamic type is *ethfee.Hook -- silently dropping any extra field a
-// concrete hook added (here, `unsupported`) along with whatever behavior
-// depended on it. feehookv3.Hook overrides CloneState precisely to avoid
-// this; this test would fail if that override were ever removed.
+// AfterSwap/CloneState are defined directly on *ethfee.Hook, so a concrete
+// hook that adds its own extra fields WITHOUT overriding CloneState gets a
+// clone whose dynamic type is *ethfee.Hook, silently dropping those fields.
+// feehookv3.Hook has no such extra fields -- Unsupported/UnsupportedErr live
+// directly on ethfee.Hook -- so it relies on the embedded CloneState as-is;
+// this test would fail if that guard stopped surviving a clone.
 func TestCloneState_PreservesUnsupportedGuard(t *testing.T) {
 	t.Parallel()
 
-	h := &Hook{Hook: ethfee.Hook{BaseHook: &uniswapv4.BaseHook{}}, unsupported: true}
+	h := &Hook{Hook: ethfee.Hook{
+		BaseHook: &uniswapv4.BaseHook{}, Unsupported: true, UnsupportedErr: ErrPoolHasNoNativeCurrency,
+	}}
 	cloned := h.CloneState()
-
-	_, isFeeHookV3 := cloned.(*Hook)
-	require.True(t, isFeeHookV3, "clone must keep dynamic type *feehookv3.Hook, got %T", cloned)
 
 	_, err := cloned.BeforeSwap(&uniswapv4.BeforeSwapParams{CalcOut: true, ZeroForOne: true})
 	assert.ErrorIs(t, err, ErrPoolHasNoNativeCurrency, "clone must keep rejecting swaps on an unsupported pool")

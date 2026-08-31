@@ -3,6 +3,7 @@ package klik
 import (
 	"context"
 	"math/big"
+	"sync"
 
 	"github.com/KyberNetwork/ethrpc"
 	"github.com/ethereum/go-ethereum/common"
@@ -65,12 +66,8 @@ func (h *Hook) Track(ctx context.Context, param *uniswapv4.HookParam) (json.RawM
 		launchToken = param.Pool.Tokens[1].Address
 	}
 
-	var factoryAddr common.Address
-	if _, err := param.RpcClient.NewRequest().SetContext(ctx).SetBlockNumber(param.BlockNumber).AddCall(&ethrpc.Call{
-		ABI:    hookABI,
-		Target: param.HookAddress.Hex(),
-		Method: "factory",
-	}, []any{&factoryAddr}).Call(); err != nil {
+	factoryAddr, err := factoryOf(ctx, param)
+	if err != nil {
 		return nil, err
 	}
 
@@ -101,6 +98,44 @@ func (h *Hook) Track(ctx context.Context, param *uniswapv4.HookParam) (json.RawM
 	h.FeeBps = feeBpsForMarketCap(tiers, mcap)
 
 	return json.Marshal(h)
+}
+
+// factoryCache holds each Klik hook address's factory() result, keyed by
+// hook address. factory() is a hook-level constant -- every pool that shares
+// a hook address shares the same factory -- so re-reading it via RPC on
+// every single pool's every single Track() call is pure waste; this caches
+// it for the life of the process instead.
+var factoryCache sync.Map // common.Address -> common.Address
+
+// factoryOf returns param.HookAddress's factory() address, reading it via
+// RPC only on the first call for a given hook address.
+func factoryOf(ctx context.Context, param *uniswapv4.HookParam) (common.Address, error) {
+	if cached, ok := factoryCache.Load(param.HookAddress); ok {
+		return cached.(common.Address), nil
+	}
+
+	var factoryAddr common.Address
+	if _, err := param.RpcClient.NewRequest().SetContext(ctx).SetBlockNumber(param.BlockNumber).AddCall(&ethrpc.Call{
+		ABI:    hookABI,
+		Target: param.HookAddress.Hex(),
+		Method: "factory",
+	}, []any{&factoryAddr}).Call(); err != nil {
+		return common.Address{}, err
+	}
+
+	factoryCache.Store(param.HookAddress, factoryAddr)
+	return factoryAddr, nil
+}
+
+// CloneState is overridden (rather than inherited from ethfee.Hook) because
+// `nativePaired` lives on *this* type, not on ethfee.Hook -- see ethfee.Hook's
+// doc comment for why the embedded CloneState alone wouldn't preserve it.
+// nativePaired is currently only read by Track() (never called on a cloned
+// pool), so this is a latent-correctness guard for future BeforeSwap/
+// AfterSwap overrides more than a currently-observable bug.
+func (h *Hook) CloneState() uniswapv4.Hook {
+	cloned := *h
+	return &cloned
 }
 
 var _ uniswapv4.Hook = (*Hook)(nil)

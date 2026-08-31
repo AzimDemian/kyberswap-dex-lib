@@ -219,7 +219,18 @@ type UnknownHookStat struct {
 	Rejected int64
 }
 
-var unknownHookStats sync.Map // common.Address -> *unknownHookCounters
+// maxUnknownHookStats bounds unknownHookStats' size. v4 hook addresses are
+// cheap to generate in bulk (permissionless deployment, permission bits
+// mined into the low address bits) and pool discovery is on-chain and
+// automatic, so this map's key space is effectively attacker-influenced.
+// Past the cap, newly seen addresses are silently dropped rather than
+// tracked; addresses already being tracked keep updating regardless.
+const maxUnknownHookStats = 50_000
+
+var (
+	unknownHookStats     sync.Map // common.Address -> *unknownHookCounters
+	unknownHookStatsSize atomic.Int64
+)
 
 type unknownHookCounters struct {
 	allowed  atomic.Int64
@@ -227,9 +238,20 @@ type unknownHookCounters struct {
 }
 
 // RecordUnknownHook records one pool-construction outcome for a hook address
-// that had no registered factory. Safe for concurrent use.
+// that had no registered factory. Safe for concurrent use. Once
+// unknownHookStats has reached maxUnknownHookStats distinct addresses, a
+// previously-unseen address is silently ignored instead of being added.
 func RecordUnknownHook(hookAddress common.Address, allowed bool) {
-	v, _ := unknownHookStats.LoadOrStore(hookAddress, &unknownHookCounters{})
+	v, loaded := unknownHookStats.Load(hookAddress)
+	if !loaded {
+		if unknownHookStatsSize.Load() >= maxUnknownHookStats {
+			return
+		}
+		v, loaded = unknownHookStats.LoadOrStore(hookAddress, &unknownHookCounters{})
+		if !loaded {
+			unknownHookStatsSize.Add(1)
+		}
+	}
 	counters := v.(*unknownHookCounters)
 	if allowed {
 		counters.allowed.Add(1)
