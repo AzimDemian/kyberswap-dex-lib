@@ -18,7 +18,7 @@ func GetPoolTokens(ctx context.Context, httpClient *ethrpc.Client, resolverAddr 
 		Target: resolverAddr,
 		Method: DRRMethodGetPoolReservesAdjusted,
 		Params: []any{common.HexToAddress(poolAddr)},
-	}, []any{result})
+	}, []any{&result})
 	if _, err := req.TryAggregate(); err != nil {
 		return common.Address{}, common.Address{}, err
 	}

@@ -2,12 +2,14 @@ package uniswapv4
 
 import (
 	_ "embed"
+	"fmt"
 	"testing"
 
 	"github.com/goccy/go-json"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/entity"
+	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/liquidity-source/pancake/infinity/shared"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/source/pool"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/util/bignumber"
 	"github.com/KyberNetwork/kyberswap-dex-lib/pkg/valueobject"
@@ -96,4 +98,38 @@ func TestPoolSimulator_CalcAmountIn(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, bignumber.NewBig10("3823278233713"), got.TokenAmountOut.Amount)
+}
+
+// TestNewPoolSimulator_UnregisteredHook exercises the NewPoolSimulator
+// construction-time gate: an unregistered hook with only revert/accounting
+// permission bits set must still build (via BaseHook fallback), while one
+// with a return-delta permission bit must still be rejected.
+func TestNewPoolSimulator_UnregisteredHook(t *testing.T) {
+	t.Parallel()
+
+	basePoolJSON := `{"address":"0x9969d64e96abcfec89bb3816ddd6fbad39e5f510e35c49ca04cbb9ba9b6cab65","swapFee":990000,"exchange":"uniswap-v4","type":"uniswap-v4","timestamp":1764066577,"reserves":["30346","39055449087309741"],"tokens":[{"address":"0xaf88d065e77c8cc2239327c5edb3a432268e5831","symbol":"USDC","decimals":6,"swappable":true},{"address":"0xb688ba096b7bb75d7841e47163cd12d18b36a5bf","symbol":"mPendle","decimals":18,"swappable":true}],"extra":"{\"liquidity\":34426962013,\"sqrtPriceX96\":89879887344939541440282565011026845,\"tickSpacing\":19800,\"tick\":278847,\"ticks\":[{\"index\":-871200,\"liquidityGross\":34426962013,\"liquidityNet\":34426962013},{\"index\":871200,\"liquidityGross\":34426962013,\"liquidityNet\":-34426962013}]}","staticExtra":"{\"0x0\":[false,false],\"fee\":990000,\"tS\":19800,\"hooks\":\"%s\",\"uR\":\"0xa51afafe0263b40edaef0df8781ea9aa03e381a3\",\"pm2\":\"0x000000000022d473030f116ddee9f6b43ac78ba3\",\"mc3\":\"0xca11bde05977b3631167028862be2a173976ca11\"}","blockNumber":403938805}`
+
+	tests := []struct {
+		name      string
+		hooksAddr string
+		wantErr   error
+	}{
+		{"revert/accounting-only hook builds via BaseHook fallback", "0x0000000000000000000000000000000000000080", nil},
+		{"return-delta hook is still rejected", "0x0000000000000000000000000000000000000008", shared.ErrUnsupportedHook},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var poolEnt entity.Pool
+			assert.NoError(t, json.Unmarshal(
+				fmt.Appendf(nil, basePoolJSON, tt.hooksAddr), &poolEnt))
+
+			_, err := NewPoolSimulator(poolEnt, valueobject.ChainID(42161))
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
 }

@@ -45,6 +45,15 @@ type HookExtra struct {
 	BlockTimestamp         uint32                  `json:"bt"`
 	OracleUniGeoParams     *ldf.OracleUniGeoParams `json:"oug,omitempty"`
 	PriceOracle            common.Address          `json:"po,omitempty"`
+	// HubPauseFlags/HubUnpauseFuse mirror BunniHub.getPauseStatus() — a single
+	// bitmap shared by every pool on this Hub (see notPaused() in BunniHub.sol).
+	// Bit HUB_PAUSE_HOOK_HANDLE_SWAP gates hookHandleSwap, called unconditionally
+	// on every swap; bit HUB_PAUSE_HOOK_SET_IDLE_BALANCE gates hookSetIdleBalance,
+	// called only when a swap surges. Either bit being set (with UnpauseFuse
+	// false) means the corresponding on-chain call reverts regardless of the
+	// swap's amounts — see Hook.BeforeSwap's pause checks.
+	HubPauseFlags  uint8 `json:"hpf"`
+	HubUnpauseFuse bool  `json:"huf"`
 }
 
 type LdfState struct {
@@ -194,6 +203,11 @@ type LegacyPoolStateRPC struct {
 		Reserve1                 *big.Int
 		IdleBalance              [32]byte
 	}
+}
+
+type PauseStatusRPC struct {
+	PauseFlags  uint8
+	UnpauseFuse bool
 }
 
 type SwapResult struct {

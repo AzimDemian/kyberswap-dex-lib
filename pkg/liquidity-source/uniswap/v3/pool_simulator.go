@@ -156,7 +156,7 @@ func (p *PoolSimulator) CalcAmountIn(param pool.CalcAmountInParams) (*pool.CalcA
 		return nil, ErrOverflow
 	}
 
-	result, err := p.V3Pool.GetInputAmountV2(zeroForOne, amountOut, uint256.Int{})
+	result, err := p.V3Pool.GetInputAmountV2(zeroForOne, amountOut, *p.GetSqrtPriceLimit(zeroForOne))
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func (p *PoolSimulator) CalcAmountOut(param pool.CalcAmountOutParams) (*pool.Cal
 		return nil, ErrOverflow
 	}
 	zeroForOne := tokenInIndex == 0
-	result, err := p.V3Pool.GetOutputAmountV2(zeroForOne, amountIn, uint256.Int{})
+	result, err := p.V3Pool.GetOutputAmountV2(zeroForOne, amountIn, *p.GetSqrtPriceLimit(zeroForOne))
 	if err != nil {
 		return nil, err
 	} else if !p.allowEmptyTicks && result.AmountCalculated.Sign() <= 0 {

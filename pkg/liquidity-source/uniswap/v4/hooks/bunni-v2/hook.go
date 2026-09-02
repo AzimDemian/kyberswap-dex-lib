@@ -137,6 +137,13 @@ func (h *Hook) UpdateBalance(swapInfo any) {
 	}
 }
 
+// hubPaused reports whether BunniHub currently has the given notPaused()
+// bit set, i.e. any on-chain call gated by it (see the
+// _HUB_PAUSE_HOOK_* constants) would revert with BunniHub__Paused right now.
+func (h *Hook) hubPaused(bit uint8) bool {
+	return !h.HubUnpauseFuse && h.HubPauseFlags&(1<<bit) != 0
+}
+
 func (h *Hook) BeforeSwap(params *uniswapv4.BeforeSwapParams) (*uniswapv4.BeforeSwapResult, error) {
 	if h.ldf == nil {
 		return nil, errors.New("ldf is not initialized")
@@ -144,6 +151,13 @@ func (h *Hook) BeforeSwap(params *uniswapv4.BeforeSwapParams) (*uniswapv4.Before
 
 	if h.hooklet == nil {
 		return nil, errors.New("hooklet is not initialized")
+	}
+
+	// hookHandleSwap is called unconditionally by every swap through this
+	// Hub — if it's paused, the swap reverts on-chain regardless of amounts
+	// or price, so there's no valid quote to give.
+	if h.hubPaused(_HUB_PAUSE_HOOK_HANDLE_SWAP) {
+		return nil, errors.New("BunniHub__Paused")
 	}
 
 	amountSpecified := uint256.MustFromBig(params.AmountSpecified)
@@ -274,6 +288,12 @@ func (h *Hook) BeforeSwap(params *uniswapv4.BeforeSwapParams) (*uniswapv4.Before
 	}
 
 	if shouldSurge {
+		// A surging swap calls hookSetIdleBalance to persist the rebalanced
+		// split — if that's paused, the swap reverts on-chain even though
+		// the AMM math above is fine.
+		if h.hubPaused(_HUB_PAUSE_HOOK_SET_IDLE_BALANCE) {
+			return nil, errors.New("BunniHub__Paused")
+		}
 		newIdleBalance, err := h.computeIdleBalance(
 			currentActiveBalance0,
 			currentActiveBalance1,

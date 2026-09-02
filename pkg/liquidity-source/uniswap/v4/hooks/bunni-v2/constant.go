@@ -23,6 +23,16 @@ const (
 	DYNAMIC_AND_STATEFUL              // LDF can change, uses ldfState
 )
 
+// Bit positions within BunniHub's pauseFlags (see notPaused() in BunniHub.sol
+// and HookExtra.HubPauseFlags/HubUnpauseFuse). Only the two calls the swap
+// path can trigger are listed; the rest (deposit=0, queueWithdraw=1,
+// withdraw=2, deployBunniToken=3, lockForRebalance=6, hookGive=7) don't
+// affect quoting.
+const (
+	_HUB_PAUSE_HOOK_HANDLE_SWAP      = 4 // gates hookHandleSwap, called on every swap
+	_HUB_PAUSE_HOOK_SET_IDLE_BALANCE = 5 // gates hookSetIdleBalance, called only when a swap surges
+)
+
 var (
 	ZERO_BALANCE = [32]byte{
 		0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,

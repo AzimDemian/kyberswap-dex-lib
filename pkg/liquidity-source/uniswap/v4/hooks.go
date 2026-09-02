@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"sync"
+	"sync/atomic"
 
 	"github.com/KyberNetwork/ethrpc"
 	"github.com/ethereum/go-ethereum/common"
@@ -102,6 +104,40 @@ func HasSwapPermissions(address common.Address) bool {
 	return hasPermission(address, BeforeSwap) || hasPermission(address, AfterSwap)
 }
 
+// ChangesSwapDeltas reports whether the hook address's permission bits allow
+// it to return a nonzero delta from beforeSwap/afterSwap, i.e. directly
+// alter swap amounts beyond the underlying AMM curve. This is the strongest
+// signal a hook is NOT approximable by BaseHook (which always returns a
+// zero delta): a return-delta-permissioned hook can turn quoting for its
+// pools into an entirely different, hook-defined curve.
+func ChangesSwapDeltas(address common.Address) bool {
+	return hasPermission(address, BeforeSwapReturnsDelta) || hasPermission(address, AfterSwapReturnsDelta)
+}
+
+// UnknownHookUnsafe reports whether a hook with no registered adapter can
+// safely fall back to BaseHook for quoting purposes. It classifies hooks by
+// their effect on swap math rather than by identity:
+//
+//   - Hooks that cannot return a swap delta and sit on a static-fee pool
+//     cannot change amountOut/amountIn at all; at worst they can revert
+//     (e.g. an allowlist/blacklist/time gate) or do pure accounting, both of
+//     which BaseHook already reproduces correctly for quoting (execution may
+//     still revert, but that's a liveness concern, not a pricing one).
+//   - Hooks permissioned to return a swap delta, or permissioned to run
+//     beforeSwap on a dynamic-fee pool (where it may override the LP fee via
+//     its return value), can change the output in ways BaseHook's zero
+//     delta / zero fee cannot approximate, so they're unsafe without a real
+//     adapter.
+//
+// isDynamicFee should reflect the pool's own dynamic-fee flag (see
+// shared.IsDynamicFee), not anything about the hook itself.
+func UnknownHookUnsafe(address common.Address, isDynamicFee bool) bool {
+	if ChangesSwapDeltas(address) {
+		return true
+	}
+	return isDynamicFee && hasPermission(address, BeforeSwap)
+}
+
 type Hook interface {
 	GetExchange() string
 	AllowEmptyTicks() bool
@@ -169,6 +205,74 @@ func RegisterHooksFactory(factory HookFactory, addresses ...common.Address) bool
 		HookFactories[address] = factory
 	}
 	return true
+}
+
+// UnknownHookStat counts, for one unregistered hook address, how many pool
+// simulators were built against it: how many were let through via the
+// BaseHook fallback (judged safe by UnknownHookUnsafe) versus how many were
+// rejected outright. It's a lightweight substitute for a manually curated
+// hook registry -- ops can read GetUnknownHookStats periodically to see
+// which unadapted hooks are actually seeing pools/volume and prioritize
+// writing a real adapter for them.
+type UnknownHookStat struct {
+	Allowed  int64
+	Rejected int64
+}
+
+// maxUnknownHookStats bounds unknownHookStats' size. v4 hook addresses are
+// cheap to generate in bulk (permissionless deployment, permission bits
+// mined into the low address bits) and pool discovery is on-chain and
+// automatic, so this map's key space is effectively attacker-influenced.
+// Past the cap, newly seen addresses are silently dropped rather than
+// tracked; addresses already being tracked keep updating regardless.
+const maxUnknownHookStats = 50_000
+
+var (
+	unknownHookStats     sync.Map // common.Address -> *unknownHookCounters
+	unknownHookStatsSize atomic.Int64
+)
+
+type unknownHookCounters struct {
+	allowed  atomic.Int64
+	rejected atomic.Int64
+}
+
+// RecordUnknownHook records one pool-construction outcome for a hook address
+// that had no registered factory. Safe for concurrent use. Once
+// unknownHookStats has reached maxUnknownHookStats distinct addresses, a
+// previously-unseen address is silently ignored instead of being added.
+func RecordUnknownHook(hookAddress common.Address, allowed bool) {
+	v, loaded := unknownHookStats.Load(hookAddress)
+	if !loaded {
+		if unknownHookStatsSize.Load() >= maxUnknownHookStats {
+			return
+		}
+		v, loaded = unknownHookStats.LoadOrStore(hookAddress, &unknownHookCounters{})
+		if !loaded {
+			unknownHookStatsSize.Add(1)
+		}
+	}
+	counters := v.(*unknownHookCounters)
+	if allowed {
+		counters.allowed.Add(1)
+	} else {
+		counters.rejected.Add(1)
+	}
+}
+
+// GetUnknownHookStats returns a snapshot of every unregistered hook address
+// seen so far via RecordUnknownHook, keyed by hook address.
+func GetUnknownHookStats() map[common.Address]UnknownHookStat {
+	out := make(map[common.Address]UnknownHookStat)
+	unknownHookStats.Range(func(key, value any) bool {
+		counters := value.(*unknownHookCounters)
+		out[key.(common.Address)] = UnknownHookStat{
+			Allowed:  counters.allowed.Load(),
+			Rejected: counters.rejected.Load(),
+		}
+		return true
+	})
+	return out
 }
 
 func GetHook(hookAddress common.Address, param *HookParam) (hook Hook, ok bool) {
