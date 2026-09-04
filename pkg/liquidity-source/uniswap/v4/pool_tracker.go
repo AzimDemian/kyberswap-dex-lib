@@ -353,7 +353,18 @@ func (t *PoolTracker) getPoolTicksFromStateView(
 		tIdx := int64(tick.Index)
 		isOldTick[tIdx] = true
 		if sv, changed := changedTickMap[tIdx]; changed {
-			if sv.LiquidityNet == nil || sv.LiquidityNet.Sign() == 0 {
+			// A tick is initialized iff liquidityGross != 0 — that's what the
+			// bitmap bit tracks on-chain (core Uniswap tick.update() clears a
+			// tick only when liquidityGrossAfter == 0), and it's what
+			// getAllTicksFromBitmap below filters on too. liquidityNet can
+			// legitimately be zero on a tick that's still gross-initialized
+			// (e.g. two positions with equal and opposite net deltas sharing an
+			// edge) — checking LiquidityNet here instead silently dropped such
+			// ticks from the incrementally-maintained state on any event that
+			// zeroed their net, even though the tick was never actually
+			// consumed, causing the tracked pool to permanently diverge from a
+			// fresh full scan until the source re-bootstraps.
+			if sv.LiquidityGross == nil || sv.LiquidityGross.Sign() == 0 {
 				logger.Debugf("deleted tick %v %v", p.Address, tick.Index)
 				continue // consumed entirely
 			}
@@ -378,7 +389,7 @@ func (t *PoolTracker) getPoolTicksFromStateView(
 			continue
 		}
 		sv := stateViewTicks[i]
-		if sv.LiquidityNet != nil && sv.LiquidityNet.Sign() != 0 {
+		if sv.LiquidityGross != nil && sv.LiquidityGross.Sign() != 0 {
 			combined = append(combined, ticklens.TickResp{
 				TickIdx:        strconv.FormatInt(tIdx, 10),
 				LiquidityGross: sv.LiquidityGross.String(),
